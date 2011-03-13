@@ -1,0 +1,319 @@
+=head1 NAME
+
+mp3packer - an MP3 reorganizer
+
+=head1 SYNOPSIS
+
+   mp3packer [options] in.mp3 [out]  
+   mp3packer [options] inDir [outDir]  
+
+=head1 DESCRIPTION
+
+B<MP3packer> is a program which can rearrange the data within an MP3 to
+fulfill specific goals. By default, the program generates the smallest MP3
+possible (with the least padding). However, many people also use it to turn
+VBR files into CBR for use with players which don't support VBR.
+
+Processes C<in.mp3> according to C<options> and saves the output to
+C<out>. If C<out> is a directory, mp3packer will keep the same name as C<in>
+but in the C<out> directory. If C<out> is not given, the C<-a> string will
+be appended to the file name (see below).
+
+Processes all files ending in C<.mp3> in the directory C<inDir>. This is not
+recursive. If C<outDir> is given, all output files will have the same name
+in the C<outDir> directory. If C<outDir> is not given, the files will have
+the C<-a> string appended to them, and will stay in C<inDir>.
+
+=head1 OPTIONS
+
+The options, if specified, may be any of the following:
+
+=over
+
+=item -b #
+
+Minimum bitrate allowed for output. Defaults to 0, which means all frame
+sizes are allowed. If the number given is a valid bitrate, the minimum frame
+size will be "dithered" between padded and unpadded frames, depending on
+standard CBR rules. If the bitrate given is one more than a valid bitrate,
+all frames will be padded. Anything larger than the maximum bitrate will be
+clamped to a padded maximum-bitrate frame. All other bitrates will round up
+to the next higher unpadded frame.
+
+For example, `-b 129` will result in the smallest allowed frame size being a
+padded 128kbps frame. `-b 117` will result in the smallest allowed frame
+size being an *un*padded 128kbps frame. If `-b 128` is used with 44100Hz
+files, the minimum bitrate will depend on the frame number. Assuming
+44100Hz, for 2 frames out of 49 the minimum frame will be unpadded, for the
+other 47 it will be padded. All bitrates from 114 to 127 will result in the
+smallest frame being an unpadded 128kbps frame. For further clarifications,
+see [below](#bswitch).
+
+=item -t
+
+Strip non-MP3 data at the beginning of the file. This will remove some kinds
+of ID3v2 tags. Use both `-s` and `-t` to remove all tags.
+
+=item -s
+
+Strip non-MP3 data at the end of the file. Using this option will remove
+most tags and any incomplete last frames from the file.
+
+=item -z
+
+This option makes mp3packer partially decode the audio in the file, optimize
+the data, then recode it. This method stops decoding before any lossy
+transformations take place, and therefore *the `-z` switch is still
+completely lossless*. MP3 files have a number of different methods to
+compress the data, and most encoders only choose between a few of them. The
+`-z` switch will do a brute-force search for the most efficient compression
+setting. This guarantees that each frame is as small as it can get, but it
+takes *much* longer to repack.
+
+=item -a -vbr
+
+Specify the string to append to the file name if no output file name is
+given. If `mp3packer -a "-food" in.mp3` is given, the output will be named
+`in-food.mp3`. `"-vbr"` is the default.
+
+=item -u
+
+Updates the input file, and stores a backup to the output file.  So after
+`mp3packer -u process.mp3 backup.mp3`, the file `process.mp3` will contain
+the packed mp3, and `backup.mp3` will be the same as the original
+`process.mp3`. Note that if you don't specify an output file or change the
+`-a` option, the original will have `"-vbr"` appended to it, which may lead
+to confusion.
+
+=item -f
+
+Force overwriting of the output file, if it exists. When used with the `-u`
+option, it will force overwriting the backup file.
+
+=item -r, -R 
+
+As of 1.16, mp3packer will attempt to minimize the bit reservoir when the
+`-b` switch is used. The `-r` switch will force minimization all the time,
+and the `-R` switch will maximize the bit reservoir at every frame (which
+was the behavior before 1.16).  Note that this will not change the size of
+the files at all, and has little purpose other than occasionally making
+CBR320 files easier to split.
+
+=item --keep-ok [out|both]
+
+Specify which files to keep if no errors occur. `out` will only keep the
+output file and will delete the input file, whereas `both` will keep both
+files (the default)
+
+=item --keep-bad [in|out|both]
+
+Specify which files to keep if an error occurs. `in` will only leave the
+input file and will discard the repacked file. `out` does just the
+opposite. `both` keeps both files (default). Note that buffer
+under/overflows and sync errors are counted as errors, whereas recompression
+errors (if using the `-z` switch) are not.
+
+=item -i
+
+Print info about the input file, then exit. The output location, if
+specified, is ignored. See the info section for more details.
+
+=item --nice #
+
+Adjust the priority of the program. Uses a Unix-style range.
+
+=item --debug [in|out|huff|all]
+
+Prints a bunch of debugging info about the files. `--debug in` will report
+frame statistics about the input file. `--debug out` will report on how the
+file was processed and written.  `--debug huff` will print debug information
+about the recompression of frames if the `-z` option is given. `--debug all`
+does all three. It is recommended that you redirect the output to a file, as
+the information gets quite verbose.
+
+=back
+
+=head1 Info
+
+By specifying the `-i` option, the program will print data about the input
+file then exit. No files will be written and the output (if given) will be
+ignored. Example printout:
+
+    *** "test/APS.mp3"
+    INFO:
+     MPEG1 layer 3
+     21687 frames
+     44100 Hz
+     38.281250 frames per second
+     566.517551 seconds
+     12514543 bytes in file (176.722405 kbps)
+     12514126 bytes in MP3 frames (176.716516 kbps) = current bitrate
+     93784923 bits of payload data (165.546368 kbps)
+     11732617 bytes of payload data (165.680544 kbps)
+     76013 bits wasted from partially-full bytes (0.134176 kbps)
+     12513349 bytes of MP3 data (176.705544 kbps) = minimum bitrate possible
+     777 bytes of padding (0.010972 kbps)
+     417 bytes outside MP3 frames (0.005889 kbps)
+     1 sync error
+     Bitrate distribution:
+       32: 9,0
+      128: 3641,0
+      160: 7691,0
+      192: 6700,0
+      224: 2736,0
+      256: 785,0
+      320: 125,0
+     Largest frame uses 8478 bits = 1060 bytes = 324.548437 kbps
+     Smallest bitrate for CBR is 256
+
+=head2 Explanation:
+
+*** "test/APS.mp3"
+  ~ Name of the file processed.
+MPEG1 layer 3
+21687 frames
+44100 Hz
+38.281250 frames per second
+566.517551 seconds
+  ~ Basic properties of the file. All self-explanatory.
+`12514543 bytes in file (176.722405 kbps)`
+  ~ The number of bytes in the file and the corresponding bitrate.
+    This bitrate includes tags and non-MP3 data which can be stripped
+    out using the `-s` and `-t` options.
+`12514126 bytes in MP3 frames (176.716516 kbps) = current bitrate`
+  ~ The number of bytes currently in MP3 frames. This does not
+    count tags and broken frames. This is the current bitrate of the
+    file.
+`93784923 bits of payload data (165.546368 kbps)`
+  ~ The bits of payload data. This ignores padding, headers,
+    side-info, and tags.
+`11732617 bytes of payload data (165.680544 kbps)`
+  ~ The bytes of payload data. This is not a direct result of the
+    previous line, and in fact is generally going to be a higher
+    bitrate than the previous line due to partially-full bytes.
+`76013 bits wasted from partially-full bytes (0.134176 kbps)`
+  ~ The number of bits wasted from partially-full bytes. The
+    bitrate here is the difference between the previous two lines.
+    Nothing can be done to "repack" this wasted data.
+`12513349 bytes of MP3 data (176.705544 kbps) = minimum bitrate possible`
+  ~ The amount of payload data plus headers and side-info. Assuming
+    that mp3packer completely gets rid of all padding and non-mp3 data,
+    this is the smallest bitrate that can be achieved.
+`777 bytes of padding (0.010972 kbps)`
+  ~ The total amount of padding in the file. This is the main thing
+    that mp3packer tries to get rid of.
+`417 bytes outside MP3 frames (0.005889 kbps)`
+  ~ The amount of padding and tags outside of MP3 frames. By
+    default, everything before the first frame and after the last frame
+    is kept, but all non-MP3 data between frames will be discarded.
+`1 sync error`
+  ~ The number of times when a frame is not found directly after
+    the previous frame.
+32: 9,0
+128: 3641,0
+160: 7691,0
+192: 6700,0
+224: 2736,0
+256: 785,0
+320: 125,0
+  ~ The bitrate distribution of the file. Only the bitrates that
+    actually appear in the file wil be listed. The two numbers given
+    per line are the unpadded,padded frames. In the above example,
+    there are nine unpadded 32kbps frames, and no padded frames of any
+    bitrate.
+`Largest frame uses 8478 bits = 1060 bytes = 324.548437 kbps`
+  ~ Information about the frame with the largest amount of data. If
+    the bit reservoir were not used, this would be the smallest CBR
+    bitrate possible.
+`Smallest bitrate for CBR is 256`
+  ~ The smallest value for the -b option that will result in a CBR
+    file. This number is generally much less than the previous line due
+    to the bit reservoir. It is, however, generally much more than the
+    average bitrate because of limitations on the bit reservoir.
+
+=head1 How it works
+
+In normal operation, mp3packer will iterate over the input frames
+and choose the smallest frame size which can store all the data
+needed. It will therefore minimize the file size by ensuring that
+the frames are as the smallest possible. This is actually somewhat
+difficult, as the frame size depends on how much of the current
+frame's data can be stored in previous frames, and how much space
+in the current frame is necessary to store data from following
+frames.
+
+=head2 The -z switch:
+
+Whereas the default operation is to choose the minimum frame size
+to fit the data, using the `-z` switch will also minimize the data
+size. This is completely lossless, and is equivalent to
+decompressing a ZIP file and recompressing with a more aggressive
+setting. It attempts to minimize the data by doing a brute-force
+search for the optimal parameters, so it takes much longer than it
+would normally.
+
+=head2 The -b switch:
+
+Setting the `-b` switch will set the minimum bitrate for each
+frame. Using this switch will make more room in small frames for
+other frames' data, so it will also generally reduce the maximum
+bitrate as well. There is no direct control over the maximum
+bitrate, since there may simply be too much data to fit into a
+smaller frame. The exact format of the parameter is a bit odd: if
+the bitrate given is a valid frame bitrate, the minimum bitrate is
+dithered between padded and unpadded frames. If the bitrate is one
+more than a valid frame bitrate, then the minimum is a padded frame
+of bitrate one less than the given. Anything else is rounded up to
+the next highest unpadded bitrate. An example table may be simpler
+to follow, assuming a 32, 44.1, or 48KHz file:
+
+Parameter given to -b: Resultant minimum frame size:
+0-31                   unpadded 32kbps
+32                     exactly 32kbps
+33                     padded 32kbps
+34-39                  unpadded 40kbps
+40                     exactly 40kbps
+41                     padded 40kbps
+42-47                  unpadded 48kbps
+48                     exactly 48kbps
+49                     padded 48kbps
+50-63                  unpadded 64kbps
+64                     exactly 64kbps
+65                     padded 64kbps
+
+The "exact" bitrates are as follows:
+
+32000,44100,48000KHz: 32 40 48 56 64 80 96 112 128 160 192 224 256 320
+Everything else: 8 16 24 32 40 48 56 64 80 96 112 128 144 160
+
+If an exact bitrate is given, the minimum bitrate will switch between
+unpadded and padded frames in order to achieve exactly that bitrate. For 8,
+12, 16, 24, 32, and 48KHz files, this uses all unpadded frames.
+
+=head2 The -r and -R switches:
+
+After mp3packer has chosen an output bitrate for a given frame, there is
+generally a range of positions to put the actual data. The data can be
+packed as much as possible into the previous frame, or it can be set to fill
+up the current frame as much as possible.  Usually it is best to put as much
+as possible into previous frames, since this will maximize the space
+available for any subsequent frames. However, if the minimum bitrate adds
+enough padding, there is no reason to cram the data into previous frames;
+it's just going to move around the padding.
+
+The default is to pack as far behind as possible if the `-b` switch is not
+given, since there is usually no problem filling up the frames. If a minimum
+bitrate is specified then the frames are pushed as far up as possible
+without affecting any of the following frames.
+
+The `-r` switch will attempt to always push data as far up as possible, even
+if a minimum bitrate is not specified. Conversely, the `-R` switch will push
+the data into previous frames as possible (note that this was the default
+behavior before 1.16).
+
+=head1 AUTHOR
+
+B<Mp3packer> was written by Reed Wilson ("Omion").  This manpage was written
+by Rogerio Theodoro de Brito <rbrito@ime.usp.br>.
+
+=cut

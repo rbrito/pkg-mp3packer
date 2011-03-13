@@ -1,0 +1,13 @@
+mp3packer (1.20-1~ubuntu1) maverick; urgency=low
+
+  * Fix watch file to track zip files in upstream.
+  * Remove unused comments from debian/rules.
+  * Add a quick and dirty manpage based on the HTML documentation.
+
+ -- Rogério Brito <rbrito@ime.usp.br>  Sun, 13 Mar 2011 12:16:12 -0300
+
+mp3packer (1.20-1~ubuntu0) maverick; urgency=low
+
+  * Initial upload to my ppa.
+
+ -- Rogério Brito <rbrito@ime.usp.br>  Tue, 17 Aug 2010 04:40:53 -0300

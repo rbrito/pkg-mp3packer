@@ -1,0 +1,26 @@
+Description: Adapt the package to Unix-like systems
+Author: Rogério Brito <rbrito@ime.usp.br>
+Forwarded: no
+Last-Update: 2010-05-10
+
+--- a/makefile
++++ b/makefile
+@@ -1,5 +1,5 @@
+ # Change this if compiling on Unixy OS
+-OBJ_EXT=.obj
++OBJ_EXT=.o
+ 
+ all: mp3packer mp3reader
+ 
+@@ -89,8 +89,9 @@
+ 
+ 
+ clean:
+-	rm -rf ./mp3packer.exe
+-	rm -rf ./*.obj
++	rm -rf ./mp3packer
++	rm -rf ./mp3reader
++	rm -rf ./*.o
+ 	rm -rf ./*.cmi
+ 	rm -rf ./*.cmx
+ 	rm -rf ./*.cmo
