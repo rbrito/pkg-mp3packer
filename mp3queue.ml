@@ -23,6 +23,18 @@ open Pack;;
 
 open Printf;;
 
+(*
+let t1_ref = ref (counter ());;
+let printf f =
+	Printf.ksprintf (fun s ->
+		let t = counter () in
+		let t_delta = t - !t1_ref in
+		t1_ref := t;
+		Printf.printf "%10d %s" t_delta s
+	) f
+;;
+*)
+
 
 let make_xing xing header_and_side_info =
 	let out_ref = ref (xing.xingTagType ^ "\x00\x00\x00\x00") in
@@ -861,8 +873,28 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 
 			let bitrate_use = if bitrate_optimal.bitrate_data > bitrate_minimum.bitrate_data then bitrate_optimal else bitrate_minimum in
 
+			(* See if there is a gap right here *)
+			let check_output = if List2.is_empty q2 then (
+				true
+			) else (
+				let f2_last = List2.peek_last q2 in
+				(* NOTE: E (mark_q2) will clear the gap setting on any processed frame, so if the previous frame has a gap it must not have been processed *)
+				(* This part is necessary to propogate the gap flag to the end of the queue *)
+				if f2_last.f2_check_output then (
+					if debug_queue then printf "  GAP since last added frame has one\n";
+					true
+				) else (
+					(* If the frame offset has maxed out, hit 0, or the data goes all the way to the end of the frame *)
+					f2_last.f2_bytes_left > min max_reservoir_size prev_padding || prev_padding = 0 || bitrate_use.bitrate_data - bytes_to_store + pad = 0
+				)
+			) in
+			if check_output then (
+				if debug_queue then printf "  CHECKOUTPUT\n";
+			) else (
+				if debug_queue then printf "  NOCHECK\n";
+			);
 
-			List2.append q2 {f2_num = f1.f1_num; f2_bitrate = bitrate_use; f2_header = f1.f1_header; f2_side = f1.f1_side; f2_data = f1.f1_data; f2_pad = pad; f2_offset = min max_reservoir_size prev_padding; f2_bytes_left = bitrate_use.bitrate_data - bytes_to_store + pad; f2_flag = false};
+			List2.append q2 {f2_num = f1.f1_num; f2_bitrate = bitrate_use; f2_header = f1.f1_header; f2_side = f1.f1_side; f2_data = f1.f1_data; f2_pad = pad; f2_offset = min max_reservoir_size prev_padding; f2_bytes_left = bitrate_use.bitrate_data - bytes_to_store + pad; f2_flag = false; f2_check_output = check_output};
 			
 			if debug_queue then printf " C->C (copied to Q2)\n";
 			q1_to_q2 eof
@@ -961,22 +993,34 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 
 		let f2_last = List2.peek_last q2 in (* I think this is safe, since only C goes here (q1_to_q2) and C is only called if something is marked to be put into q2 *)
 		let frame_after_last_use_bytes = f2_last.f2_bytes_left in
-		
-		ignore (List2.rev_fold (fun (output_ok, next_frame_use_bytes) f2 ->
-			let k = min f2.f2_offset (f2.f2_bytes_left - next_frame_use_bytes) in
-			if debug_queue then printf "  %s%d: %d -> %d\n" (if output_ok then "*" else "") f2.f2_num f2.f2_offset (f2.f2_offset - k);
-			f2.f2_offset <- f2.f2_offset - k;
-			f2.f2_bytes_left <- f2.f2_bytes_left - k;
-			f2.f2_flag <- output_ok;
-			if f2.f2_offset = 0 then (
-				(true, f2.f2_offset)
-			) else (
-				(output_ok, f2.f2_offset)
-			)
-		) (frame_after_last_use_bytes = 0, frame_after_last_use_bytes) q2);
+
+		if f2_last.f2_check_output then (
+			(* Only process this if we need to check it *)
+
+			(* This SHOULD be true every time a frame may leave q2 (but may be true even if no frames leave) *)
+			let new_guess = f2_last.f2_check_output in
+			if debug_queue then printf "  Guess %B (%d, %d)\n" new_guess f2_last.f2_offset frame_after_last_use_bytes;
+
+			ignore (List2.rev_fold (fun (output_ok, next_frame_use_bytes) f2 ->
+				let k = min f2.f2_offset (f2.f2_bytes_left - next_frame_use_bytes) in
+				(* The two numbers %d -> %d will only be different if the location of a later frame is limited by the max size of the bit reservoir *)
+				(* Note that the frame starts out in q2 with the highest offset possible (that is, the data is the furthest forward) *)
+				if debug_queue then printf "  %s%d: %d -> %d (check: %B)\n" (if output_ok || f2.f2_offset - k = 0 then "*" else "") f2.f2_num f2.f2_offset (f2.f2_offset - k) f2.f2_check_output;
+				f2.f2_offset <- f2.f2_offset - k;
+				f2.f2_bytes_left <- f2.f2_bytes_left - k;
+				f2.f2_check_output <- false; (* Not needed any more *)
+				f2.f2_flag <- output_ok; (* This can't be based off the new output_ok since the next frame from q1 needs to know how much space is left in this frame *)
+				if f2.f2_offset = 0 then (
+					(true, f2.f2_offset)
+				) else (
+					(output_ok, f2.f2_offset)
+				)
+			) (frame_after_last_use_bytes = 0, frame_after_last_use_bytes) q2);
+
+		);
 
 		let marked = (List2.peek_first q2).f2_flag in (* If getting f2_last is safe, this is safe too *)
-		
+
 		if not marked then (
 			(* END *)
 			if debug_queue then printf " E->X!\n";
@@ -1017,7 +1061,7 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 			let header_side_raw = (string_of_header_and_bitrate ~new_bitrate:f2.f2_bitrate f2.f2_header) ^ (string_of_side_and_offset ~new_offset:f2.f2_offset f2.f2_side) in
 			
 			if debug_queue then printf "Found string in frame %d:\n \"%s\"\n" f2.f2_num (to_hex header_side_raw);
-			
+
 			(* Add the new frame to Q3 *)
 			let f_new = {
 				f3_num = f2.f2_num;
@@ -1034,7 +1078,11 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 
 			if debug_queue then printf "   New Q3 bytes ref: %d\n" !q3_bytes_ref;
 
-			if debug_queue then printf " F->F (copied to Q3)\n";
+			(* New part to clean up q3 faster *)
+			if debug_queue then printf " F->G (clean up flagged q3 frames)\n";
+			q3_to_output false;
+
+			if debug_queue then printf " F->F (copied to Q3; after F->G)\n";
 			q2_to_q3 eof
 		) else (
 			if debug_queue then printf " F->G (not copied to Q3)\n";
@@ -1042,6 +1090,9 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 		)
 	) and q3_to_output eof = (
 		(* GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG *)
+
+		(* This really needs to be run every time q2_to_q3 flags something in q3 *)
+		(* Otherwise it will keep searching for a place to start writing at the first frame of q3, which may be quite inefficient *)
 		
 		(* Ignore the f3_flag if eof is set *)
 		let copy_stuff = (if List2.is_empty q3 then false else if eof then true else (List2.peek_first q3).f3_flag) in

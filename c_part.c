@@ -6,14 +6,30 @@
 #include <caml/mlvalues.h>
 
 #if defined(__WIN32__) || defined(WIN32) || defined(_WIN32)
+#define WIN32
+#endif
+
+#if defined(WIN32)
 #include <windows.h>
 #endif
 
+/*
+CAMLprim value win_counter(value nothing) {
+	CAMLparam1(nothing);
+#if defined(WIN32)
+	LARGE_INTEGER out_large;
+	QueryPerformanceCounter(&out_large);
+	CAMLreturn(Val_int(out_large.QuadPart));
+#else
+	CAMLreturn(Val_int(0));
+#endif
+}
+*/
 
 CAMLprim value caml_nice(value val_niceness)
 {
 
-#if defined(__WIN32__) || defined(WIN32) || defined(_WIN32)
+#if defined(WIN32)
 
 	CAMLparam1(val_niceness);
 
@@ -80,4 +96,5 @@ CAMLprim value caml_nice(value val_niceness)
 #endif
 
 }
+
 
