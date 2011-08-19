@@ -22,7 +22,7 @@ open Mp3info;;
 (*
 let t1 = Unix.gettimeofday ();;
 *)
-let version = "1.21-229";;
+let version = "1.22-230";;
 
 let padding = Printf.sprintf "mp3packer%s\n" version;;
 
@@ -172,7 +172,7 @@ let minimize_bit_reservoir = (match !minimize_bit_reservoir_option_ref with
 	| Some x -> x
 );;
 
-
+(*
 let print_errors = function
 	| (0,0) -> ()
 	| (0,1) -> Printf.printf "\nWARNING: There was 1 sync error\n"
@@ -183,6 +183,34 @@ let print_errors = function
 	| (b,0) -> Printf.printf "\nWARNING: There were %d buffer errors\n" b
 	| (b,1) -> Printf.printf "\nWARNING: There was 1 sync error and %d buffer errors\n" b
 	| (b,s) -> Printf.printf "\nWARNING: There were %d buffer errors and %d sync errors\n" b s
+;;
+*)
+let print_errors = function
+	| (0,0,0) -> ()
+	| (b,s,r) -> (
+		let total = b + s + r in
+		if total = 1 then (
+			Printf.printf "\nWARNING: an error was encountered\n";
+		) else (
+			Printf.printf "\nWARNING: errors were encountered\n";
+		);
+		let max_len = String.length (string_of_int (max (max b s) r)) in
+		(match b with
+			| 0 -> ()
+			| 1 -> Printf.printf "  %*d buffer error\n" max_len 1
+			| _ -> Printf.printf "  %*d buffer errors\n" max_len b
+		);
+		(match s with
+			| 0 -> ()
+			| 1 -> Printf.printf "  %*d sync error\n" max_len 1
+			| _ -> Printf.printf "  %*d sync errors\n" max_len s
+		);
+		(match r with
+			| 0 -> ()
+			| 1 -> Printf.printf "  %*d recompression error\n" max_len 1
+			| _ -> Printf.printf "  %*d recompression errors\n" max_len r
+		);
+	)
 ;;
 
 
@@ -204,11 +232,11 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 			do_queue ~debug_in:(!debug_in_ref) ~debug_queue:(!debug_out_ref) ~min_bitrate:(!min_bitrate_ref) ~delete_beginning_junk:(!delete_begin_ref) ~delete_end_junk:(!delete_end_ref) ~padding:padding ~recompress:(!recompress_ref) ~debug_recompress:(!debug_recompress_ref) ~zero_whole_bad_frame:(!zero_whole_bad_frame_ref) ~minimize_bit_reservoir:minimize_bit_reservoir b a
 		with
 			(* The only time an End_of_file is reached is when no valid frames were found. Therefore, it's sort of a sync error... *)
-			End_of_file -> (Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1))
+			End_of_file -> (Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1,0))
 		) in
 
 		(match (errors, !keep_ok_ref, !keep_notok_ref) with
-			| ((0,0), Keep_ok_output, _) -> (Printf.printf "Repacking successful; deleting backup\n"; Sys.remove b)
+			| ((0,0,0), Keep_ok_output, _) -> (Printf.printf "Repacking successful; deleting backup\n"; Sys.remove b)
 			| (_, _, Keep_notok_output) -> (Printf.printf "Repacking not successful, but deleting backup anyway\n"; Sys.remove b)
 			| (_, _, Keep_notok_input) -> (Printf.printf "Repacking NOT successful; deleting output file\n"; Sys.remove a)
 			| _ -> () (* Keep everything *)
@@ -233,11 +261,11 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 		let errors = (try
 			do_queue ~debug_in:(!debug_in_ref) ~debug_queue:(!debug_out_ref) ~min_bitrate:(!min_bitrate_ref) ~delete_beginning_junk:(!delete_begin_ref) ~delete_end_junk:(!delete_end_ref) ~padding:padding ~recompress:(!recompress_ref) ~debug_recompress:(!debug_recompress_ref) ~zero_whole_bad_frame:(!zero_whole_bad_frame_ref) ~minimize_bit_reservoir:minimize_bit_reservoir a b
 		with
-			End_of_file -> (Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1))
+			End_of_file -> (Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1,0))
 		) in
 
 		(match (errors, !keep_ok_ref, !keep_notok_ref) with
-			| ((0,0), Keep_ok_output, _) -> (Printf.printf "Repacking successful; deleting input file\n"; Sys.remove a)
+			| ((0,0,0), Keep_ok_output, _) -> (Printf.printf "Repacking successful; deleting input file\n"; Sys.remove a)
 			| (_, _, Keep_notok_output) -> (Printf.printf "Repacking not successful, but deleting input anyway\n"; Sys.remove a)
 			| (_, _, Keep_notok_input) -> (Printf.printf "Repacking NOT successful; deleting output file\n"; Sys.remove b)
 			| _ -> () (* Keep everything *)

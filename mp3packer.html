@@ -18,15 +18,18 @@ img {
 table * {
 	text-align: center;
 }
+#lorem {
+	display:none;
+}
 -->
 </style>
 </head>
 
 <body>
-<h1 align="center">MP3packer Settings</h1>
-<h2 align="center">An MP3 reorganizer</h2>
-<h5 align="center">Copyright &copy; 2006-2007 Reed Wilson (&quot;Omion&quot;)<br />
-  &#x63;<!-- This is all crazy stuff to prevent my email from being read by bots -->&#101;&#8203;&#x64;&#105;&#8203;&#108;&#x6C;<span style="display:none"> LOREM IPSUM DOLOR SIT AMET </span>&#97;&#32;&#x41;<span style="display: none">CCEN</span>&#x54;&#32;<!-- If you can think of any other obfuscation to add, using only HTML and CSS, e-mail me! -->&#x67;&#109;<div style="display:none"> CONSECTETUR ADIPISICING ELIT </div>&#x61;<i></i>&#x69;&#108;&#x20;&#68;&#x4F;<b style="display:none">N</b>&#x54;&#8203;&#32;&#99;<div style="display:none"><b>Hmm.. it looks like you don't have CSS. My email will be very hard to decipher</b></div>​<p style="display:none">SED DO EIUSMOD TEMPOR INCIDIDUNT UT LABORE ET DOLORE MAGNA ALIQUA</p>&#111;<!-- Approaching the end, cap'n! -->&#109;</h5>
+<h1 style="text-align:center">MP3packer Settings</h1>
+<h2 style="text-align:center">An MP3 reorganizer</h2>
+<h5 style="text-align:center">Copyright &copy; 2006-2007 Reed Wilson (&quot;Omion&quot;)<br />
+  &#x63;<!-- This is all crazy stuff to prevent my email from being read by bots -->&#101;&#8203;&#x64;&#105;&#8203;&#108;&#x6C;<span id="lorem"> LOREM IPSUM DOLOR SIT AMET </span>&#97;&#32;&#x41;<span style="display: none">CCEN</span>&#x54;&#32;<!-- If you can think of any other obfuscation to add, using only HTML and CSS, e-mail me! -->&#x67;&#109;<a style="display:none"> CONSECTETUR ADIPISICING ELIT </a>&#x61;<i></i>&#x69;&#108;&#x20;&#68;&#x4F;<b style="display:none">N</b>&#x54;&#8203;&#32;&#99;<em style="display:none"><b>Hmm.. it looks like you don't have CSS. My email will be very hard to decipher</b></em>​<span style="display:none">SED DO EIUSMOD TEMPOR INCIDIDUNT UT LABORE ET DOLORE MAGNA ALIQUA</span>&#111;<!-- Approaching the end, cap'n! -->&#109;</h5>
 <h3>Abstract</h3>
 <p>MP3packer is a program which can rearrange the data within an MP3 to fulfill specific goals. By default, the program generates the smallest MP3 possible (with the least padding). However, many people also use it to turn <abbr title="variable bit rate" lang="en">VBR</abbr> files into <abbr title="constant bit rate" lang="en">CBR</abbr> for use with players which don't support VBR.</p>
 <h3>License</h3>
@@ -316,6 +319,10 @@ INFO:
 <p>The <code>-r</code> switch  will attempt to always push data as far up as possible, even if a minimum bitrate is not specified. Conversely, the <code>-R</code> switch will push the data into previous frames as possible (note that this was the default behavior before 1.16).</p>
 <h3><a name="changelog" id="changelog">Changelog:</a></h3>
 <dl>
+	<dt>1.22 (2011-06-26)</dt>
+	<dd>Fixed a rare bug that caused mp3packer to quit with certain corrupted files.<br />
+    Minor changes to <code>-z</code> to deal with overflows better<br />
+	Display recompression (<code>-z</code>) errors, and make all errors displays a bit more user-friendly.</dd>
 	<dt>1.21 (2010-08-06)</dt>
 	<dd>Frame queues are more efficient. Some files would take a very large amount of CPU time with some options in 1.16-1.20. Output files should be identical to 1.20 except for the padding bytes.</dd>
 	<dt>1.20 (2008-05-06)</dt>
@@ -332,7 +339,7 @@ INFO:
 	<dd>Major rewrite of the frame queue. Should be easier to maintain and makes more sense to read, but doesn't mean anything to the end user.<br />
 	  Added the <code>-r</code> and <code>-R</code> options to control bit reservior minimization.<br />
 	  <code>-z</code> now works with MPEG-2 files.<br />
-	Patched a problem with -z outputting larger frames than the input.<br />
+	Patched a problem with <code>-z</code> outputting larger frames than the input.<br />
 	The program will only resync if it finds 3 valid frames in a row.<br />
 	Deleting the first granule in an invalid frame now works correctly.</dd>
 	<dt>1.15-162 (2007-02-18) </dt>

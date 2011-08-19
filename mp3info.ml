@@ -135,7 +135,7 @@ let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name 
 			frame_sync_error_ref := next_wanted <> next_got;
 		done;
 		in_obj#close;
-		(0,0) (* This is never reached; it's just here to make the typechecker happy *)
+		(0,0,0) (* This is never reached; it's just here to make the typechecker happy *)
 	) with
 		| End_of_file -> (
 			Printf.printf "\r";
@@ -296,7 +296,7 @@ let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name 
 
 			in_obj#close;
 
-			(0,!sync_errors_ref)
+			(0,!sync_errors_ref,0)
 		)
 	);
 ;;
