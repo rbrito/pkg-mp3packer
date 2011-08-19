@@ -19,10 +19,13 @@
 open Mp3read;;
 open Mp3queue;;
 open Mp3info;;
+
+open Mp3types;;
+
 (*
 let t1 = Unix.gettimeofday ();;
 *)
-let version = "1.22-230";;
+let version = "1.23-234";;
 
 let padding = Printf.sprintf "mp3packer%s\n" version;;
 
@@ -58,38 +61,10 @@ let minimize_bit_reservoir_option_ref = ref None;;
 
 let niceness_ref = ref 10;;
 
-type io_t = IO_File of string | IO_Dir of string;;
-let string_of_io = function
-	| IO_File x -> Printf.sprintf "File '%s'" x
-	| IO_Dir x -> Printf.sprintf "Dir '%s'" x
-;;
+let worker_ref = ref false;;
 
 
-(* File name functions *)
-let strip_multiple_slashes =
-	let regexp = Str.regexp "[/\\\\]+" in
-	fun str -> Str.global_replace regexp "/" str
-;;
-let strip_trailing_slash str =
-	let str2 = strip_multiple_slashes str in
-	if String.length str2 = 0 then (
-		str2
-	) else if str2.[String.length str2 - 1] = '/' then (
-		String.sub str2 0 (String.length str2 - 1)
-	) else (
-		str2
-	)
-;;
-let append_before_extension str app =
-	(try
-		let dot = String.rindex str '.' in
-		let before = String.sub str 0 dot in
-		let after = String.sub str dot (String.length str - dot) in
-		before ^ app ^ after
-	with
-		Not_found -> str ^ app
-	)
-;;
+
 
 
 
@@ -132,19 +107,16 @@ let args = Arg.align [
 	("-i", Arg.Set only_info_ref,                          " Print info and exit (no processing)");
 	("--ib", Arg.Set only_info_bitrate_ref,                " Print only the min CBR bitrate (similar to -i)");
 	("--nice",  Arg.Set_int niceness_ref,                "10 Priority of the encoding. 0 = normal, 19 = idle");
-	("--debug", Arg.String debug_parse,               "\"x\" Print a bunch of garbage while processing. x = (in | out | all)")
+	("--debug", Arg.String debug_parse,               "\"x\" Print a bunch of garbage while processing. x = (in | out | all)");
+	("--worker", Arg.Set worker_ref,                       " Internal use only -- do not use")
 ];;
 
-let find_file x = (try
-	Some (Unix.stat x).Unix.st_kind
-with
-	| Unix.Unix_error _ -> None
-);;
+
 
 Arg.parse args (fun w ->
 	let x = strip_trailing_slash w in
 	match (!in_name_ref, !out_name_ref, find_file x) with
-	| (None, None, None) -> (failwith (Printf.sprintf "'%s' does not exist" x))
+(*	| (None, None, None) -> (failwith (Printf.sprintf "'%s' does not exist" x))*)
 	| (Some (IO_File _), None, None) -> out_name_ref := Some (IO_File x)
 	| (Some (IO_File _), None, Some Unix.S_REG) -> out_name_ref := Some (IO_File x) (* Output file already exists *)
 	| (Some (IO_File _), None, Some Unix.S_DIR) -> out_name_ref := Some (IO_Dir x) (* Use the same name, but in a different directory *)
@@ -156,7 +128,7 @@ Arg.parse args (fun w ->
 	| (None, _, Some Unix.S_REG) -> in_name_ref := Some (IO_File x)
 	| (None, _, Some Unix.S_DIR) -> in_name_ref := Some (IO_Dir x)
 	| (_, _, Some _) -> (failwith (Printf.sprintf "'%s' is not a file or directory" x))
-) (usage_head);;
+) usage_head;;
 
 (* Set the priority *)
 ignore (Mp3types.nice !niceness_ref);;
@@ -190,28 +162,44 @@ let print_errors = function
 	| (b,s,r) -> (
 		let total = b + s + r in
 		if total = 1 then (
-			Printf.printf "\nWARNING: an error was encountered\n";
+			Printf.printf "\n  WARNING: an error was encountered\n";
 		) else (
-			Printf.printf "\nWARNING: errors were encountered\n";
+			Printf.printf "\n  WARNING: errors were encountered\n";
 		);
 		let max_len = String.length (string_of_int (max (max b s) r)) in
 		(match b with
 			| 0 -> ()
-			| 1 -> Printf.printf "  %*d buffer error\n" max_len 1
-			| _ -> Printf.printf "  %*d buffer errors\n" max_len b
+			| 1 -> Printf.printf "    %*d buffer error\n" max_len 1
+			| _ -> Printf.printf "    %*d buffer errors\n" max_len b
 		);
 		(match s with
 			| 0 -> ()
-			| 1 -> Printf.printf "  %*d sync error\n" max_len 1
-			| _ -> Printf.printf "  %*d sync errors\n" max_len s
+			| 1 -> Printf.printf "    %*d sync error\n" max_len 1
+			| _ -> Printf.printf "    %*d sync errors\n" max_len s
 		);
 		(match r with
 			| 0 -> ()
-			| 1 -> Printf.printf "  %*d recompression error\n" max_len 1
-			| _ -> Printf.printf "  %*d recompression errors\n" max_len r
+			| 1 -> Printf.printf "    %*d recompression error\n" max_len 1
+			| _ -> Printf.printf "    %*d recompression errors\n" max_len r
 		);
 	)
 ;;
+
+
+let queue_state = {
+	q_silent = !worker_ref;
+	q_debug_in = !debug_in_ref;
+	q_debug_queue = !debug_out_ref;
+	q_debug_recompress = !debug_recompress_ref;
+	q_min_bitrate = !min_bitrate_ref;
+	q_delete_beginning_junk = !delete_begin_ref;
+	q_delete_end_junk = !delete_end_ref;
+	q_padding = padding;
+	q_recompress = !recompress_ref;
+	q_zero_whole_bad_frame = !zero_whole_bad_frame_ref;
+	q_minimize_bit_reservoir = minimize_bit_reservoir;
+};;
+
 
 
 (* Now see what the user wants *)
@@ -223,13 +211,19 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 		()
 (*		errors*)
 	)
+(*
+) else if !worker_ref then (
+	(* This is being run by another mp3packer; make sure everything is silent *)
+	(* rename_input_ref should NOT be used with this since Linux will just overwrite the other file *)
+*)
 ) else if !rename_input_ref then (
 	(* Rename the input file, and do_queue backwards to update the original filename *)
 	fun a b -> (
 		if Sys.file_exists b then Sys.remove b;
 		Sys.rename a b;
 		let errors = (try
-			do_queue ~debug_in:(!debug_in_ref) ~debug_queue:(!debug_out_ref) ~min_bitrate:(!min_bitrate_ref) ~delete_beginning_junk:(!delete_begin_ref) ~delete_end_junk:(!delete_end_ref) ~padding:padding ~recompress:(!recompress_ref) ~debug_recompress:(!debug_recompress_ref) ~zero_whole_bad_frame:(!zero_whole_bad_frame_ref) ~minimize_bit_reservoir:minimize_bit_reservoir b a
+(*			do_queue ~debug_in:(!debug_in_ref) ~debug_queue:(!debug_out_ref) ~min_bitrate:(!min_bitrate_ref) ~delete_beginning_junk:(!delete_begin_ref) ~delete_end_junk:(!delete_end_ref) ~padding:padding ~recompress:(!recompress_ref) ~debug_recompress:(!debug_recompress_ref) ~zero_whole_bad_frame:(!zero_whole_bad_frame_ref) ~minimize_bit_reservoir:minimize_bit_reservoir b a*)
+			do_queue queue_state (new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in b) (new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] a)
 		with
 			(* The only time an End_of_file is reached is when no valid frames were found. Therefore, it's sort of a sync error... *)
 			End_of_file -> (Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1,0))
@@ -259,7 +253,8 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 	(* Regular *)
 	fun a b -> (
 		let errors = (try
-			do_queue ~debug_in:(!debug_in_ref) ~debug_queue:(!debug_out_ref) ~min_bitrate:(!min_bitrate_ref) ~delete_beginning_junk:(!delete_begin_ref) ~delete_end_junk:(!delete_end_ref) ~padding:padding ~recompress:(!recompress_ref) ~debug_recompress:(!debug_recompress_ref) ~zero_whole_bad_frame:(!zero_whole_bad_frame_ref) ~minimize_bit_reservoir:minimize_bit_reservoir a b
+(*			do_queue ~debug_in:(!debug_in_ref) ~debug_queue:(!debug_out_ref) ~min_bitrate:(!min_bitrate_ref) ~delete_beginning_junk:(!delete_begin_ref) ~delete_end_junk:(!delete_end_ref) ~padding:padding ~recompress:(!recompress_ref) ~debug_recompress:(!debug_recompress_ref) ~zero_whole_bad_frame:(!zero_whole_bad_frame_ref) ~minimize_bit_reservoir:minimize_bit_reservoir a b*)
+			do_queue queue_state (new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in a) (new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] b)
 		with
 			End_of_file -> (Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1,0))
 		) in
@@ -287,6 +282,7 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 		()
 	)
 );;
+
 
 
 let do_a_file (*?(force_overwrite = !force_overwrite_ref)*) fin1 fout1 =
@@ -320,6 +316,7 @@ let do_a_file (*?(force_overwrite = !force_overwrite_ref)*) fin1 fout1 =
 ;;
 
 
+
 (* Let's add full-directory support here *)
 let do_a_dir append_extension din1 dout1 =
 	let din = strip_multiple_slashes din1 in
@@ -330,7 +327,7 @@ let do_a_dir append_extension din1 dout1 =
 			(* The file has the right extension *)
 			if dout1 = "" && append_extension = "" then (
 				(* An invalid output directory has been passed; don't set the file. This is the case when the -i switch was used *)
-				Printf.printf "snatoheu";
+(*				Printf.printf "snatoheu";*)
 				let errors = do_a_file (Filename.concat din fin) "" in
 				()
 			) else if append_extension = "" || !do_files_with_appended_string_ref || not (Filename.check_suffix fin (append_extension ^ ".mp3")) then (
@@ -344,6 +341,61 @@ let do_a_dir append_extension din1 dout1 =
 	) contents_in;
 	()
 ;;
+
+
+
+
+
+
+
+(******************)
+(* MULTI-THREADED *)
+(******************)
+
+(*
+let do_a_file_worker fin1 fout1 =
+	(try
+		let fin = strip_multiple_slashes fin1 in
+		let fout = strip_multiple_slashes fout1 in
+		(* Only do the forward version -- the file system probably has the best mutex system in place, and the reverse version wouldn't work well *)
+		let worker_ret = (try
+			let worker_errors = do_queue queue_state (new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in fin) (new Mp3write.mp3write_unix ~flags:[Unix.O_EXCL] fout) in
+			Worker_ok {
+				worker_ok_input_name = fin ^ "\x1A" ^ fin;
+				worker_output_result = worker_errors;
+			}
+		with
+			| Unix.Unix_error (Unix.EEXIST, "open", _) -> raise Not_found
+			| End_of_file -> Worker_ok {worker_ok_input_name = fin; worker_output_result = (0,1,0)}
+			| e -> Worker_fail {worker_fail_input_name = fin; worker_exception = e}
+		) in
+
+		(* Don't remove any files from here; let the controller do that *)
+		Printf.printf "nthoeutnhoenuht\n";
+		Printf.printf "\x1A";
+		Printf.printf "\x0A";
+		Printf.printf "\x0D";
+		Printf.printf "nthoeutnhoenuht\n";
+		let ret = Marshal.to_string worker_ret [Marshal.No_sharing] in
+		Printf.printf "%S\n" ret;
+		flush stdout;
+	with
+		_ -> ()
+	);
+	()
+;;
+*)
+
+
+
+
+
+
+
+
+(************)
+(* PROCESS! *)
+(************)
 
 
 (*
@@ -362,6 +414,108 @@ let do_a_dir append_extension din1 dout1 =
 	 .  ??? Y | Display usage
 *)
 
+
+
+(*prepare_dir "TEST" "OUT" (fun x y -> Printf.printf "FUN\n  \"%s\"\n  \"%s\"\n" x y);;*)
+
+
+(***
+if !worker_ref then (
+	set_binary_mode_in stdin true;
+	set_binary_mode_out stdout true;
+	Multiproc.worker_loop None
+) else if true then (
+	(* Controller; make a few workers *)
+	Printf.printf "%S\n" Sys.argv.(0);
+	let (to_all, get_something, get_available, close_all) = Multiproc.controller_setup () in
+	to_all (Worker_queue queue_state);
+(*
+	to_all (Worker_do ("TEST\\APE.mp3","OUT\\APE.mp3"));
+*)
+(*	Printf.printf "Sent queue\n%!";*)
+
+	let filename_index_table = Hashtbl.create 10 in
+	let get_names_of_index i = match trap_exception_2 Hashtbl.find filename_index_table i with
+		| Normal x -> x
+		| Error e -> (Printf.sprintf ">Unknown input file %d<" i, Printf.sprintf ">Unknown output file %d<" i)
+	in
+
+	let file_i_ref = ref 0 in
+
+	let rec try_get () =
+		match get_available () with
+		| Some x -> (
+			(match x with
+				| Worker_ok {worker_ok_index = i; worker_output_result = (a,b,c)} -> (
+					let (in_name, out_name) = get_names_of_index i in
+					Printf.printf "\n*** '%s' -> '%s'" in_name out_name;
+					print_errors (a,b,c);
+					Printf.printf "\n%!";
+(*					Printf.printf "OK (%d,%d,%d) \"%d\"\n%!" a b c i*)
+				)
+				| Worker_fail {worker_fail_index = i; worker_exception = Worker_fail_end_of_file} -> (
+					let (in_name, out_name) = get_names_of_index i in
+					Printf.printf "\n*** '%s' -> '%s'" in_name out_name;
+					Printf.printf "\nWARNING: No valid MP3 headers found\n%!"
+				)
+				| Worker_fail {worker_fail_index = i; worker_exception = e} -> (
+					let (in_name, out_name) = get_names_of_index i in
+					Printf.printf "\n*** '%s' -> '%s'" in_name out_name;
+					Printf.printf "\nERROR: Failed with error '%s'\n%!" (string_of_worker_exn e)
+				)
+				| Worker_skipped i -> ()(*Printf.printf "A worker skipped \"%s\"\n%!" i*)
+				| Worker_done -> ()(*Printf.printf "A worker is done\n%!"*)
+			);
+			try_get ()
+		)
+		| None -> ()(*Printf.printf "nothing good found\n%!"*)
+	in
+	let f a b =
+		try_get ();
+		to_all (Worker_do {worker_file_index = !file_i_ref; worker_file_input = a; worker_file_output = b});
+		Hashtbl.add filename_index_table !file_i_ref (a,b);
+		try_get ();
+(*		Printf.printf "Sent file #%d \"%s\"\n%!" !file_i_ref a;*)
+		incr file_i_ref;
+	in
+(*	Multiproc.prepare_dir !rename_input_ref !force_overwrite_ref "TEST" "OUT" f;*)
+
+	let f_test a b =
+		Printf.printf ">>> SENDING '%s' -> '%s'\n" a b
+	in
+	Multiproc.list_problems !rename_input_ref !force_overwrite_ref "TEST" "OUT" f;
+
+(*
+	to_all (Worker_do ("TEST\\APS.mp3","OUT\\APS.mp3"));
+	Printf.printf "Sent file 1\n%!";
+	to_all (Worker_do ("TEST\\APE.mp3","OUT\\APE.mp3"));
+	Printf.printf "Sent file 2\n%!";
+*)
+	to_all Worker_finish;
+	Printf.printf "Sent finish\n%!";
+
+	let rec controller_loop () =
+		match get_something () with
+		| Some x -> (
+			(match x with
+				| Worker_ok {worker_ok_index = i; worker_output_result = (a,b,c)} -> Printf.printf "OK (%d,%d,%d) \"%d\"\n%!" a b c i
+				| Worker_fail {worker_fail_index = i; worker_exception = e} -> Printf.printf "FAIL \"%s\" \"%d\"\n%!" (string_of_worker_exn e) i
+				| Worker_skipped i -> ()(*Printf.printf "A worker skipped \"%s\"\n%!" i*)
+				| Worker_done -> Printf.printf "A worker is done\n%!"
+			);
+			controller_loop ()
+		)
+		| None -> Printf.printf "ALL DONE!\n%!"
+	in
+	controller_loop ()
+
+) else (
+	()
+);;
+***)
+
+
+
 if !debug_in_ref || !debug_out_ref then (
 	match (!in_name_ref, !out_name_ref, !only_info_ref) with
 	| (Some (IO_File x), Some (IO_File y), false) -> Printf.printf "mp3 mp3 N\n"
@@ -377,25 +531,39 @@ if !debug_in_ref || !debug_out_ref then (
 	| (Some (IO_Dir  x),         _       , true ) -> Printf.printf "DIR ??? Y\n"
 	| (None            ,         _       , true ) -> Printf.printf " .  ??? Y\n"
 );;
+(*
+if !worker_ref then (
+	set_binary_mode_out stdout true;
+	match (!in_name_ref, !out_name_ref) with
+	| (Some (IO_File x), Some (IO_File y)) -> do_a_file_worker x y
+	| (Some (IO_File x), Some (IO_Dir  y)) -> do_a_file_worker x (Filename.concat y (Filename.basename x))
+(*	do_a_file_worker*)
+) else*) (
 
-(match (!in_name_ref, !out_name_ref, !only_info_ref) with
-	| (Some (IO_File x), Some (IO_File y), false) -> ignore (do_a_file x y)
-	| (Some (IO_File x), Some (IO_Dir  y), false) -> ignore (do_a_file x (Filename.concat (y) (Filename.basename x)))
-	| (Some (IO_File x), None            , false) -> ignore (do_a_file x (append_before_extension x !append_ref))
-	| (Some (IO_Dir  x), Some (IO_File y), false) -> (failwith "Can't output a directory to a file")
-	| (Some (IO_Dir  x), Some (IO_Dir  y), false) -> (do_a_dir "" x y)
-	| (Some (IO_Dir  x), None            , false) -> (do_a_dir !append_ref x x)
-	| (None            , Some (IO_File y), false) -> (failwith "This REALLY shouldn't happen... (1)")
-	| (None            , Some (IO_Dir  y), false) -> (failwith "This REALLY shouldn't happen... (2)")
-	| (None            , None            , false) -> (Arg.usage args ("ERROR: No input given\n" ^ usage_head))
-	| (Some (IO_File x),         _       , true ) -> ignore (do_a_file x "")
-	| (Some (IO_Dir  x),         _       , true ) -> (do_a_dir "" x "")
-	| (None            ,         _       , true ) -> (Arg.usage args ("ERROR: No input given\n" ^ usage_head))
-(*	| (Some (IO_File x), _, true) -> do_a_file x "" (* Only info *)*)
+	(match (!in_name_ref, !out_name_ref, !only_info_ref) with
+		| (Some (IO_File x), Some (IO_File y), false) -> ignore (do_a_file x y)
+		| (Some (IO_File x), Some (IO_Dir  y), false) -> ignore (do_a_file x (Filename.concat (y) (Filename.basename x)))
+		| (Some (IO_File x), None            , false) -> ignore (do_a_file x (append_before_extension x !append_ref))
+		| (Some (IO_Dir  x), Some (IO_File y), false) -> (failwith "Can't output a directory to a file")
+		| (Some (IO_Dir  x), Some (IO_Dir  y), false) -> (do_a_dir "" x y)
+		| (Some (IO_Dir  x), None            , false) -> (do_a_dir !append_ref x x)
+		| (None            , Some (IO_File y), false) -> (failwith "This REALLY shouldn't happen... (1)")
+		| (None            , Some (IO_Dir  y), false) -> (failwith "This REALLY shouldn't happen... (2)")
+		| (None            , None            , false) -> (Arg.usage args ("ERROR: No input given\n" ^ usage_head))
+		| (Some (IO_File x),         _       , true ) -> ignore (do_a_file x "")
+		| (Some (IO_Dir  x),         _       , true ) -> (do_a_dir "" x "")
+		| (None            ,         _       , true ) -> (Arg.usage args ("ERROR: No input given\n" ^ usage_head))
+	(*	| (Some (IO_File x), _, true) -> do_a_file x "" (* Only info *)*)
+	);
 );;
+
+
+
+
 
 (*
 let t2 = Unix.gettimeofday ();;
 Printf.printf "TIME: %f\n" (t2 -. t1);;
 *)
+
 

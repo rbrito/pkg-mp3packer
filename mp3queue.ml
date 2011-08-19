@@ -107,8 +107,23 @@ let make_xing xing header_and_side_info =
 ;;
 
 
-
+(*
 let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_beginning_junk=false) ?(delete_end_junk=false) ?(padding="mp3packer!\n") ?(recompress=false) ?(debug_recompress=false) ?(zero_whole_bad_frame=false) ?(minimize_bit_reservoir=false) in_name out_name =
+*)
+
+let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
+	let debug_in = state.q_debug_in in
+	let debug_queue = state.q_debug_queue in
+	let debug_recompress = state.q_debug_recompress in
+	let min_bitrate = state.q_min_bitrate in
+	let delete_beginning_junk = state.q_delete_beginning_junk in
+	let delete_end_junk = state.q_delete_end_junk in
+	let padding = state.q_padding in
+	let recompress = state.q_recompress in
+	let zero_whole_bad_frame = state.q_zero_whole_bad_frame in
+	let minimize_bit_reservoir = state.q_minimize_bit_reservoir in
+
+
 
 	(* Set to true if a buffer error occurs *)
 	let buffer_errors_ref = ref 0 in
@@ -117,10 +132,15 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 	(* The number of errors encountered while recompressing the frames (will be 0 without -z) *)
 	let recompress_errors_ref = ref 0 in
 
-	let in_obj = new mp3read_new ~debug:debug_in in_name in
+(*
+	let in_obj = new mp3read_unix ~debug:debug_in in_name in
+	let out_obj = new Mp3write.mp3write_unix out_name in
+*)
 
+(*
 	let out_file = open_out_bin out_name in
 	let output_this = output_string out_file in
+*)
 
 	(* Sync to first frame *)
 	let (new_req, first_frame, (first_wanted_at, first_got_at), in_xing_option) = (
@@ -439,21 +459,18 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 			} in
 			let output_data = (
 				let output_length_bytes = output_side.side_bytes in
-				if output_offset_bits land 7 = 0 then (
+				if output_length_bytes = 0 then (
+					(* Don't try to get any data if there is no data to get! *)
+					""
+				) else if output_offset_bits land 7 = 0 then (
 					(* Byte-aligned; just sub the string *)
-(*					let first_byte_of_rest_of_reservoir = output_offset_bits asr 3 + output_length_bytes in*)
 					String.sub reservoir (output_offset_bits asr 3) output_length_bytes
 				) else (
 					(* UH-OH! Need to do a bit-blit *)
 					let out = String.create output_length_bytes in
-					if output_length_bytes > 0 then (
-						(* Zero the last byte so that no random memory junk gets in after the data bits *)
-						out.[output_length_bytes - 1] <- '\x00';
-					);
+					out.[output_length_bytes - 1] <- '\x00';
 					bit_blit reservoir output_offset_bits out 0 (first_granule_bits + second_granule_bits);
-					
-(*					let first_byte_of_rest_of_reservoir = (output_offset_bits + first_granule_bits + second_granule_bits + 7) asr 3 in*)
-					
+
 					out
 				)
 			) in
@@ -500,21 +517,19 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 			} in
 			let output_data = (
 				let output_length_bytes = output_side.side_bytes in
-				if output_offset_bits land 7 = 0 then (
+				if output_length_bytes = 0 then (
+					(* No data here *)
+					""
+				) else if output_offset_bits land 7 = 0 then (
 					(* String copy *)
-(*					let first_byte_of_rest_of_reservoir = output_offset_bits asr 3 + output_length_bytes in*)
 					String.sub reservoir (output_offset_bits asr 3) output_length_bytes
 				) else (
 					(* bit-blit! *)
 					let out = String.create output_length_bytes in
-					if output_length_bytes > 0 then (
-						(* Zero the last byte so that no random memory junk gets in after the data bits *)
-						out.[output_length_bytes - 1] <- '\x00';
-					);
+					(* Zero the last byte so that no random memory junk gets in after the data bits *)
+					out.[output_length_bytes - 1] <- '\x00';
 					bit_blit reservoir output_offset_bits out 0 (new_a + new_b + new_c + new_d);
-					
-(*					let first_byte_of_rest_of_reservoir = (output_offset_bits + new_a + new_b + new_c + new_d + 7) asr 3 in*)
-					
+
 					out
 				)
 			) in
@@ -545,19 +560,15 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 			} in
 			let output_data = (
 				let output_length_bytes = output_side.side_bytes in
-				if output_offset_bits land 7 = 0 then (
-(*					let first_byte_of_rest_of_reservoir = output_offset_bits asr 3 + output_length_bytes in*)
+				if output_length_bytes = 0 then (
+					""
+				) else if output_offset_bits land 7 = 0 then (
 					String.sub reservoir (output_offset_bits asr 3) output_length_bytes
 				) else (
 					let out = String.create output_length_bytes in
-					if output_length_bytes > 0 then (
-						(* Zero the last byte so that no random memory junk gets in after the data bits *)
-						out.[output_length_bytes - 1] <- '\x00';
-					);
+					out.[output_length_bytes - 1] <- '\x00';
 					bit_blit reservoir output_offset_bits out 0 granule_bits;
-					
-(*					let first_byte_of_rest_of_reservoir = (output_offset_bits + granule_bits + 7) asr 3 in*)
-					
+
 					out
 				)
 			) in
@@ -592,19 +603,15 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 			} in
 			let output_data = (
 				let output_length_bytes = output_side.side_bytes in
-				if output_offset_bits land 7 = 0 then (
-(*					let first_byte_of_rest_of_reservoir = output_offset_bits asr 3 + output_length_bytes in*)
+				if output_length_bytes = 0 then (
+					""
+				) else if output_offset_bits land 7 = 0 then (
 					String.sub reservoir (output_offset_bits asr 3) output_length_bytes
 				) else (
 					let out = String.create output_length_bytes in
-					if output_length_bytes > 0 then (
-						(* Zero the last byte so that no random memory junk gets in after the data bits *)
-						out.[output_length_bytes - 1] <- '\x00';
-					);
+					out.[output_length_bytes - 1] <- '\x00';
 					bit_blit reservoir output_offset_bits out 0 (new_a + new_b);
-					
-(*					let first_byte_of_rest_of_reservoir = (output_offset_bits + new_a + new_b + 7) asr 3 in*)
-					
+
 					out
 				)
 			) in
@@ -613,15 +620,29 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 	) in
 
 	(* Make room for the beginning data, if it is to be saved *)
+(*
 	if not delete_beginning_junk then (
 		if debug_queue then printf "Writing the first %d bytes to the output file\n" in_obj#first_mp3_byte;
 		let in_temp = open_in_bin in_name in
 		let length = in_obj#first_mp3_byte in
 		let str = String.create length in
 		really_input in_temp str 0 length;
-		output_this str;
+		out_obj#output_this str;
 		close_in in_temp;
 	);
+*)
+	(* I think I can do this with one handle *)
+	if not delete_beginning_junk then (
+		if debug_queue then printf "Writing the first %d bytes to the output file\n" in_obj#first_mp3_byte;
+		let in_pos = in_obj#pos in
+		in_obj#seek 0;
+		let length = in_obj#first_mp3_byte in
+		let str = String.create length in
+		in_obj#read str 0 length;
+		out_obj#output_this str;
+		in_obj#seek in_pos;
+	);
+
 
 	(* Make room for the LAME/XING header *)
 	let (xing_bitrate, xing_pos, output_is_lame, xing_header_and_side_info) = (
@@ -634,11 +655,11 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 		) in
 		let min_lame_bitrate = bytes_to_bitrate (if is_lame then 156 else 140) in
 		let bitrate = max (min_bitrate_now 0) min_lame_bitrate in
-		output_this (bitrate_to_header bitrate false false);
-		output_this (String.make side_info_size '\x00');
+		out_obj#output_this (bitrate_to_header bitrate false false);
+		out_obj#output_this (String.make side_info_size '\x00');
 		let xing_header_and_side_info = (bitrate_to_header bitrate false false) ^ (String.make side_info_size '\x00') in
-		let wheresit = pos_out out_file in
-		output_this (String.make bitrate.bitrate_data '\x00');
+		let wheresit = out_obj#pos in
+		out_obj#output_this (String.make bitrate.bitrate_data '\x00');
 		if debug_queue then printf "XING frame located at %d\n" wheresit;
 		(bitrate, wheresit, is_lame, xing_header_and_side_info)
 	) in
@@ -724,7 +745,7 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 			(* This is not correct for some files when a frame is larger than 1% of the whole file length *)
 			(* However, these files must be fairly short (1000 frames in the worst case) when it goes very fast anyway *)
 			let next_update_percent = if float_of_int in_obj#pos > float_of_int in_obj#length /. 100. *. float_of_int update_percent then (
-				if not debug_queue then printf "\r%2d%% done on frame %d%!" update_percent frame_num;
+				if not debug_queue && not state.q_silent then printf "\r%2d%% done on frame %d%!" update_percent frame_num;
 				succ update_percent
 			) else (
 				update_percent
@@ -732,6 +753,10 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 
 (*			let side = side_info_of_string if_now.if_side_raw in*)
 			let side = side_info_of_if if_now in
+			if debug_queue then (
+				Printf.printf " Data bits:%s\n" (Array.fold_left (fun a b -> Printf.sprintf "%s %d" a b) "" side.side_bits);
+				Printf.printf " Total data bits: %d\n" (Array.fold_left (+) 0 side.side_bits);
+			);
 			let combined_bit_reservoir = bit_reservoir_so_far ^ if_now.if_data_raw in
 			let (new_side_info, new_data_string, buffer_error) = (
 				let start_offset = String.length bit_reservoir_so_far - side.side_offset in
@@ -755,7 +780,7 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 							) in
 							printf "\rWARNING: Decompression error on frame %d at ~%.2fs\n" frame_num frame_time;
 *)
-							printf "\rWARNING: Decompression error on frame %d at %s\n" frame_num (string_time_of_frame frame_num);
+							if not state.q_silent then printf "\rWARNING: Decompression error on frame %d at %s\n" frame_num (string_time_of_frame frame_num);
 							incr recompress_errors_ref;
 						);
 						if String.length q.f1_data > String.length data_use then (
@@ -791,7 +816,7 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 				) in
 				printf "\rWARNING: Sync error on frame %d at ~%.2fs (wanted at %d, found at %d)\n" frame_num frame_time wanted_at got_at;
 *)
-				printf "\rWARNING: Sync error on frame %d at %s (wanted at %d, found at %d)\n" frame_num (string_time_of_frame frame_num) wanted_at got_at;
+				if not state.q_silent then printf "\rWARNING: Sync error on frame %d at %s (wanted at %d, found at %d)\n" frame_num (string_time_of_frame frame_num) wanted_at got_at;
 				incr sync_errors_ref;
 			);
 			if buffer_error then (
@@ -806,7 +831,7 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 				) in
 				printf "\rWARNING: Buffer over/underflow on frame %d at ~%.2fs\n" frame_num frame_time;
 *)
-				printf "\rWARNING: Buffer over/underflow on frame %d at %s\n" frame_num (string_time_of_frame frame_num);
+				if not state.q_silent then printf "\rWARNING: Buffer over/underflow on frame %d at %s\n" frame_num (string_time_of_frame frame_num);
 				incr buffer_errors_ref;
 			);
 
@@ -1121,10 +1146,10 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 			min_output_bitrate_ref := min !min_output_bitrate_ref f3_bitrate;
 (*			incr total_frames_ref;*)
 			total_frame_bytes_ref := !total_frame_bytes_ref + String.length f3.f3_header_side_raw + String.length f3.f3_output_data;
-			Expandarray.set frame_locations f3.f3_num (pos_out out_file);
+			Expandarray.set frame_locations f3.f3_num out_obj#pos;
 
-			output_this f3.f3_header_side_raw;
-			output_this f3.f3_output_data;
+			out_obj#output_this f3.f3_header_side_raw;
+			out_obj#output_this f3.f3_output_data;
 			
 			if debug_queue then printf " G->G (outputted)\n";
 			q3_to_output eof
@@ -1178,13 +1203,14 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 
 (*	if debug_queue then printf "Functional %d == Imperative %d???\n" total_frames !total_frames_ref;*)
 
-	printf "\r100%% done with %d frames\n%!" total_frames;
+	if not state.q_silent then printf "\r100%% done with %d frames\n%!" total_frames;
 	
 	(********************************)
 	(* EVERY FRAME HAS BEEN WRITTEN *)
 	(********************************)
 
 	(* Write the trailing non-MP3 data, if it is to be saved *)
+(*
 	if not delete_end_junk then (
 		if debug_queue then printf "Writing the last %d bytes to the output file\n" (in_obj#length - in_obj#last_mp3_byte - 1);
 		let in_temp = open_in_bin in_name in
@@ -1192,10 +1218,23 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 		let str = String.create length in
 		seek_in in_temp (in_obj#last_mp3_byte + 1);
 		really_input in_temp str 0 length;
-		output_this str;
+		out_obj#output_this str;
 		close_in in_temp;
 	);
-	let total_bytes_written = pos_out out_file in
+*)
+	(* Again with one handle *)
+	if not delete_end_junk then (
+		if debug_queue then printf "Writing the last %d bytes to the output file\n" (in_obj#length - in_obj#last_mp3_byte - 1);
+		let in_pos = in_obj#pos in
+		let length = in_obj#length - (in_obj#last_mp3_byte + 1) in
+		let str = String.create length in
+		in_obj#seek (in_obj#last_mp3_byte + 1);
+		in_obj#read str 0 length;
+		out_obj#output_this str;
+		in_obj#seek in_pos;
+	);
+
+	let total_bytes_written = out_obj#pos in
 
 	if debug_queue then (
 		printf "Number of sync errors:   %d\n" !sync_errors_ref;
@@ -1351,12 +1390,12 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 			| Some l -> printf "  LAME -> LAME\n";
 		)
 	);
-	seek_out out_file xing_pos;
+	out_obj#seek xing_pos;
 	if debug_queue then printf "  Writing tag at %d\n" xing_pos;
-	output_this xing_string;
+	out_obj#output_this xing_string;
 
 	in_obj#close;
-	close_out out_file;
+	out_obj#close;
 
 	(!buffer_errors_ref,!sync_errors_ref,!recompress_errors_ref)
 

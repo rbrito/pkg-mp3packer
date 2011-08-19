@@ -16,6 +16,25 @@
 	Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 *******************************************************************************)
 
+
+type ('a,'b) error_t = Normal of 'a | Error of 'b;;
+
+let (@@) a b = a b;;
+
+let trap_exception a b =
+	try
+		Normal (a b)
+	with
+		e -> Error e
+;;
+let trap_exception_2 a b c =
+	try
+		Normal (a b c)
+	with
+		e -> Error e
+;;
+
+
 let to_hex s =
   let result = String.create (2 * String.length s) in
   for i = 0 to String.length s - 1 do
@@ -36,6 +55,47 @@ let to_bin =
 		result
 	)
 ;;
+
+
+(* File name functions *)
+let strip_multiple_slashes =
+	let regexp = Str.regexp "[/\\\\]+" in
+	fun str -> Str.global_replace regexp "/" str
+;;
+let strip_trailing_slash str =
+	let str2 = strip_multiple_slashes str in
+	if String.length str2 = 0 then (
+		str2
+	) else if str2.[String.length str2 - 1] = '/' then (
+		String.sub str2 0 (String.length str2 - 1)
+	) else (
+		str2
+	)
+;;
+let append_before_extension str app =
+	(try
+		let dot = String.rindex str '.' in
+		let before = String.sub str 0 dot in
+		let after = String.sub str dot (String.length str - dot) in
+		before ^ app ^ after
+	with
+		Not_found -> str ^ app
+	)
+;;
+
+(* Other file functions *)
+type io_t = IO_File of string | IO_Dir of string;;
+let string_of_io = function
+	| IO_File x -> Printf.sprintf "File '%s'" x
+	| IO_Dir x -> Printf.sprintf "Dir '%s'" x
+;;
+let find_file x = (try
+	Some (Unix.stat x).Unix.st_kind
+with
+	| Unix.Unix_error _ -> None
+);;
+
+
 
 (* Used for printing debug stuff *)
 let nul = open_out (if Sys.os_type = "Win32" then "NUL" else "/dev/null");;
@@ -304,87 +364,87 @@ type f3_t = {
 	mutable f3_flag : bool;
 };;
 
-(*
-let side_info_of_if f = (
-	let side = f.if_side_raw in
-	match (f.if_header.header_id, f.if_header.header_channel_mode) with
-	| (MPEG1, ChannelMono) -> (
-		let off = unpackBits side 0 9 in
-		let g1 = unpackBits side 18 12 in
-		let g2 = unpackBits side 77 12 in
-		{
-			side_raw = side;
-			side_offset = off;
-			side_bits = [| g1; g2 |];
-			side_bytes = (g1 + g2) asr 3;
-		}
-	)
-	| (MPEG1, _) -> (
-		let off = unpackBits side 0 9 in
-		let g1 = unpackBits side  20 12 in
-		let g2 = unpackBits side  79 12 in
-		let g3 = unpackBits side 138 12 in
-		let g4 = unpackBits side 197 12 in
-		{
-			side_raw = side;
-			side_offset = off;
-			side_bits = [| g1; g2; g3; g4 |];
-			side_bytes = (g1 + g2 + g3 + g4) asr 3;
-		}
-	)
-	| (_, ChannelMono) -> (
-		let off = unpackBits side 0 8 in
-		let g1 = unpackBits side  9 12 in
-		{
-			side_raw = side;
-			side_offset = off;
-			side_bits = [| g1 |];
-			side_bytes = (g1) asr 3;
-		}
-	)
-	| (_, _) -> (
-		let off = unpackBits side 0 8 in
-		let g1 = unpackBits side 10 12 in
-		let g2 = unpackBits side 73 12 in
-		{
-			side_raw = side;
-			side_offset = off;
-			side_bits = [| g1; g2 |];
-			side_bytes = (g1 + g2) asr 3;
-		}
-	)
-);;
-*)
-
-
 (* !NEW 20070326 *)
 
 
 
-(* For the queue *)
-(*
-type frameInTransit_t = {
-	transitFrame : int;
-	transitHeader : header_t;
-	transitSide : string;
-	transitData : string;
-	transitDataLength : int;
-	transitBits : int;
-	mutable transitPad : int; (* How much space the current frame should leave at the end *)
+(* NEW FOR THE WORKERS *)
+type queue_input_t = {
+	q_silent : bool;
+	q_debug_in : bool;
+	q_debug_queue : bool;
+	q_debug_recompress : bool;
+	q_min_bitrate : int;
+	q_delete_beginning_junk : bool;
+	q_delete_end_junk : bool;
+	q_padding : string;
+	q_recompress : bool;
+	q_zero_whole_bad_frame : bool;
+	q_minimize_bit_reservoir : bool;
 };;
 
-type frameOut_t = {
-	outFrame : int;
-	outHeader : string;
-	outSide : string;
-	outData : string;
+
+type worker_file_t = {
+	worker_file_index : int;
+	worker_file_input : string;
+	worker_file_output: string;
+};;
+type worker_do_t = 
+	| Worker_queue of queue_input_t
+	| Worker_do of worker_file_t
+	| Worker_finish
+;;
+
+type worker_ok_file_t = {
+	worker_ok_index : int;
+	worker_output_result : (int * int * int);
 };;
 
-*)
+(* Exceptions are no good to transfer between processes, so make a more concrete type *)
+type worker_fail_exception_t =
+	| Worker_fail_end_of_file
+	| Worker_fail_invalid_argument of string
+	| Worker_fail_failure of string
+	| Worker_fail_not_found
+	| Worker_fail_out_of_memory
+	| Worker_fail_stack_overflow
+	| Worker_fail_sys_error of string
+	| Worker_fail_division_by_zero
+	| Worker_fail_other of string (* Should be the result of Printexc.to_string e *)
+;;
+let string_of_worker_exn = function
+	| Worker_fail_end_of_file -> Printexc.to_string End_of_file
+	| Worker_fail_invalid_argument s -> Printexc.to_string @@ Invalid_argument s
+	| Worker_fail_failure s -> Printexc.to_string @@ Failure s
+	| Worker_fail_not_found -> Printexc.to_string Not_found
+	| Worker_fail_out_of_memory -> Printexc.to_string Out_of_memory
+	| Worker_fail_stack_overflow -> Printexc.to_string Stack_overflow
+	| Worker_fail_sys_error s -> Printexc.to_string @@ Sys_error s
+	| Worker_fail_division_by_zero -> Printexc.to_string @@ Division_by_zero
+	| Worker_fail_other s -> s
+;;
+let worker_exn_of_exn = function
+	| End_of_file -> Worker_fail_end_of_file
+	| Invalid_argument s -> Worker_fail_invalid_argument s
+	| Failure s -> Worker_fail_failure s
+	| Not_found -> Worker_fail_not_found
+	| Out_of_memory -> Worker_fail_out_of_memory
+	| Stack_overflow -> Worker_fail_stack_overflow
+	| Sys_error s -> Worker_fail_sys_error s
+	| Division_by_zero -> Worker_fail_division_by_zero
+	| e -> Worker_fail_other (Printexc.to_string e)
+;;
 
-
-
-
+type worker_fail_t = {
+	worker_fail_index : int;
+	worker_exception : worker_fail_exception_t;
+};;
+type worker_ret_t =
+	| Worker_ok of worker_ok_file_t
+	| Worker_fail of worker_fail_t
+	| Worker_skipped of int
+	| Worker_done
+;;
 
 
 
