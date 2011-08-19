@@ -2,10 +2,12 @@
 OBJ_EXT=.obj
 EXE_EXT=.exe
 
+ocaml=ocamlopt
+
 all: mp3packer mp3reader
 
-mp3packer: crc.cmx list2.cmx expandarray.cmx c_part$(OBJ_EXT) mp3types.cmx pack.cmx mp3read.cmx mp3info.cmx mp3framehuffman.cmx mp3frameutils.cmx mp3queue.cmx mp3packer.ml
-	ocamlopt -o mp3packer$(EXE_EXT) unix.cmxa str.cmxa crc.cmx list2.cmx expandarray.cmx c_part$(OBJ_EXT) mp3types.cmx pack.cmx mp3read.cmx mp3info.cmx mp3framehuffman.cmx mp3frameutils.cmx mp3queue.cmx mp3packer.ml
+mp3packer: crc.cmx list2.cmx expandarray.cmx c_part$(OBJ_EXT) mp3types.cmx pack.cmx mp3read.cmx mp3write.cmx mp3info.cmx mp3framehuffman.cmx mp3frameutils.cmx mp3queue.cmx multiproc.cmx mp3packer.ml
+	ocamlopt -o mp3packer$(EXE_EXT) unix.cmxa str.cmxa crc.cmx list2.cmx expandarray.cmx c_part$(OBJ_EXT) mp3types.cmx pack.cmx mp3read.cmx mp3write.cmx mp3info.cmx mp3framehuffman.cmx mp3frameutils.cmx mp3queue.cmx multiproc.cmx mp3packer.ml
 # mp3packer: crc.cmx expandarray.cmx mp3types.cmx pack.cmx mp3read.cmx mp3info.cmx mp3framehuffman.cmx mp3queue.cmx mp3packer.ml
 #	ocamlopt -o mp3packer unix.cmxa str.cmxa crc.cmx expandarray.cmx mp3types.cmx pack.cmx mp3read.cmx mp3info.cmx mp3framehuffman.cmx mp3queue.cmx mp3packer.ml
 
@@ -26,23 +28,38 @@ mp3framehuffmantest: mp3types.cmx pack.cmx mp3framehuffman.cmx mp3framehuffmante
 
 
 
+%.cmx: %.ml
+	$(ocaml) -c $<
+
+multiproc.cmx: mp3types.cmx mp3read.cmx mp3write.cmx mp3queue.cmx multiproc.ml
 mp3read.cmx: mp3types.cmx pack.cmx mp3read.ml
-	ocamlopt -c mp3types.cmx pack.cmx mp3read.ml
-
-mp3queue.cmx: list2.cmx mp3types.cmx pack.cmx mp3read.cmx mp3framehuffman.cmx mp3frameutils.cmx mp3queue.ml
-	ocamlopt -c list2.cmx mp3types.cmx pack.cmx mp3read.cmx mp3framehuffman.cmx mp3frameutils.cmx mp3queue.ml
-
-mp3info.cmx: expandarray.cmx mp3types.cmx pack.cmx mp3read.cmx mp3info.ml
-	ocamlopt -c expandarray.cmx mp3types.cmx pack.cmx mp3read.cmx mp3info.ml
-
+mp3write.cmx: mp3types.cmx pack.cmx mp3write.ml
+mp3queue.cmx: list2.cmx mp3types.cmx pack.cmx mp3read.cmx mp3write.cmx mp3framehuffman.cmx mp3frameutils.cmx mp3queue.ml
+mp3info.cmx: expandarray.cmx mp3types.cmx pack.cmx mp3read.cmx mp3write.cmx mp3info.ml
 crc.cmx: crc.ml
-	ocamlopt -c crc.ml
-
 pack.cmx: pack.ml
-	ocamlopt -c pack.ml
-
 mp3types.cmx: mp3types.ml
-	ocamlopt -c mp3types.ml
+
+#mp3read.cmx: mp3types.cmx pack.cmx mp3read.ml
+#	ocamlopt -c mp3types.cmx pack.cmx mp3read.ml
+#
+#mp3write.cmx: mp3types.cmx pack.cmx mp3write.ml
+#	ocamlopt -c mp3types.cmx pack.cmx mp3write.ml
+#
+#mp3queue.cmx: list2.cmx mp3types.cmx pack.cmx mp3read.cmx mp3write.cmx mp3framehuffman.cmx mp3frameutils.cmx mp3queue.ml
+#	ocamlopt -c list2.cmx mp3types.cmx pack.cmx mp3read.cmx mp3write.cmx mp3framehuffman.cmx mp3frameutils.cmx mp3queue.ml
+#
+#mp3info.cmx: expandarray.cmx mp3types.cmx pack.cmx mp3read.cmx mp3write.cmx mp3info.ml
+#	ocamlopt -c expandarray.cmx mp3types.cmx pack.cmx mp3read.cmx mp3write.cmx mp3info.ml
+#
+#crc.cmx: crc.ml
+#	ocamlopt -c crc.ml
+#
+#pack.cmx: pack.ml
+#	ocamlopt -c pack.ml
+#
+#mp3types.cmx: mp3types.ml
+#	ocamlopt -c mp3types.ml
 
 
 

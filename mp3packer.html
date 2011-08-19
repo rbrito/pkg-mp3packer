@@ -319,6 +319,8 @@ INFO:
 <p>The <code>-r</code> switch  will attempt to always push data as far up as possible, even if a minimum bitrate is not specified. Conversely, the <code>-R</code> switch will push the data into previous frames as possible (note that this was the default behavior before 1.16).</p>
 <h3><a name="changelog" id="changelog">Changelog:</a></h3>
 <dl>
+	<dt>1.23 (2011-08-14)</dt>
+	<dd>Fixed an invalid buffer operation related to the bug fixed in 1.22.</dd>
 	<dt>1.22 (2011-06-26)</dt>
 	<dd>Fixed a rare bug that caused mp3packer to quit with certain corrupted files.<br />
     Minor changes to <code>-z</code> to deal with overflows better<br />
