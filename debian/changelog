@@ -1,3 +1,12 @@
+mp3packer (1.23-1) unstable; urgency=low
+
+  * Imported Upstream version 1.21
+  * Imported Upstream version 1.22
+  * Imported Upstream version 1.23
+  * debian/patches: Update upstream's makefile.
+
+ -- Rogério Brito <rbrito@ime.usp.br>  Fri, 19 Aug 2011 10:46:25 -0300
+
 mp3packer (1.20-1~ubuntu1) maverick; urgency=low
 
   * Fix watch file to track zip files in upstream.
