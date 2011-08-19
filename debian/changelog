@@ -4,8 +4,10 @@ mp3packer (1.23-1) unstable; urgency=low
   * Imported Upstream version 1.22
   * Imported Upstream version 1.23
   * debian/patches: Update upstream's makefile.
+  * Drop mp3reader from the package. It's not built anymore.
+  * debian/control: Update Standards-Version to 3.9.2.
 
- -- Rogério Brito <rbrito@ime.usp.br>  Fri, 19 Aug 2011 10:46:25 -0300
+ -- Rogério Brito <rbrito@ime.usp.br>  Fri, 19 Aug 2011 10:53:17 -0300
 
 mp3packer (1.20-1~ubuntu1) maverick; urgency=low
 
