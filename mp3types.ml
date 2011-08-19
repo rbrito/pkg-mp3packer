@@ -294,6 +294,7 @@ type f2_t = {
 	mutable f2_offset : int;
 	mutable f2_bytes_left : int;
 	mutable f2_flag : bool;
+	mutable f2_check_output : bool; (* if the frame may have a gap before it (or before any previous frame, if needed) *)
 };;
 
 type f3_t = {
@@ -391,6 +392,10 @@ type frameOut_t = {
 (******)
 (* C! *)
 (******)
+
+(* TEMP WINDOWS COUNTER *)
+(*external counter : unit -> int = "win_counter";;*)
+
 
 (* This function is not portable, but it won't be used with non-Windows OSes. That's what Unix.nice is for. *)
 external nice_c : int -> int = "caml_nice";;

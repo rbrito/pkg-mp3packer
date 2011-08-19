@@ -47,7 +47,7 @@ Processes <code>in.mp3</code> according to <code>options</code> and saves the ou
   <dt><code>-s</code></dt>
   <dd>Strip non-MP3 data at the end of the file. Using this option will remove most tags and any incomplete last frames from the file.</dd>
   <dt><code>-z</code></dt>
-  <dd>This option makes mp3packer partially decode the audio in the file, optimize the data, then recode it. This method stops decoding before any lossy transformations take place, and therefore <em>the <code>-z</code> switch is still completely lossless</em>. MP3 files have a number of different methods to compress the data, and most encoders only choose between a few of them. The <code>-z</code> switch will do a brute-force search for the most efficient compression setting. This gurantees that each frame is as small as it can get, but it takes <em>much</em> longer to repack.</dd>
+  <dd>This option makes mp3packer partially decode the audio in the file, optimize the data, then recode it. This method stops decoding before any lossy transformations take place, and therefore <em>the <code>-z</code> switch is still completely lossless</em>. MP3 files have a number of different methods to compress the data, and most encoders only choose between a few of them. The <code>-z</code> switch will do a brute-force search for the most efficient compression setting. This guarantees that each frame is as small as it can get, but it takes <em>much</em> longer to repack.</dd>
   <dt><code>-a "-vbr"</code></dt>
   <dd>Specify the string to append to the file name if no output file name is given. If <code>mp3packer -a &quot;-food&quot; in.mp3</code> is given, the output will be named <code>in-food.mp3</code>. <code>&quot;-vbr&quot;</code> is the default.</dd>
   <dt><code>-u</code></dt>
@@ -316,6 +316,8 @@ INFO:
 <p>The <code>-r</code> switch  will attempt to always push data as far up as possible, even if a minimum bitrate is not specified. Conversely, the <code>-R</code> switch will push the data into previous frames as possible (note that this was the default behavior before 1.16).</p>
 <h3><a name="changelog" id="changelog">Changelog:</a></h3>
 <dl>
+	<dt>1.21 (2010-08-06)</dt>
+	<dd>Frame queues are more efficient. Some files would take a very large amount of CPU time with some options in 1.16-1.20. Output files should be identical to 1.20 except for the padding bytes.</dd>
 	<dt>1.20 (2008-05-06)</dt>
 	<dd>Made the frame checker more lenient. It now will accept changes in CRC, copyright, and emphasis per frame.</dd>
 	<dt>1.19 (2007-09-29)</dt>

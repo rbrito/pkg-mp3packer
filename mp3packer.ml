@@ -22,7 +22,7 @@ open Mp3info;;
 (*
 let t1 = Unix.gettimeofday ();;
 *)
-let version = "1.20-195";;
+let version = "1.21-229";;
 
 let padding = Printf.sprintf "mp3packer%s\n" version;;
 
