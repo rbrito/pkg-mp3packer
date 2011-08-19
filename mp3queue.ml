@@ -114,6 +114,8 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 	let buffer_errors_ref = ref 0 in
 	(* The number of sync errors which occured *)
 	let sync_errors_ref = ref 0 in
+	(* The number of errors encountered while recompressing the frames (will be 0 without -z) *)
+	let recompress_errors_ref = ref 0 in
 
 	let in_obj = new mp3read_new ~debug:debug_in in_name in
 
@@ -283,55 +285,7 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 		)
 	) in
 	let min_bitrate_now frame = number_to_bitrate min_bitrate frame in
-(*
-	let side_info_of_string = (match k with
-		| {header_id = MPEG1; header_channel_mode = ChannelMono} -> (fun side ->
-			let off = unpackBits side 0 9 in
-			let g1 = unpackBits side 18 12 in
-			let g2 = unpackBits side 77 12 in
-			{
-				side_raw = side;
-				side_offset = off;
-				side_bits = [| g1; g2 |];
-				side_bytes = (g1 + g2) asr 3;
-			}
-		)
-		| {header_id = MPEG1} -> (fun side ->
-			let off = unpackBits side 0 9 in
-			let g1 = unpackBits side  20 12 in
-			let g2 = unpackBits side  79 12 in
-			let g3 = unpackBits side 138 12 in
-			let g4 = unpackBits side 197 12 in
-			{
-				side_raw = side;
-				side_offset = off;
-				side_bits = [| g1; g2; g3; g4 |];
-				side_bytes = (g1 + g2 + g3 + g4) asr 3;
-			}
-		)
-		| {header_channel_mode = ChannelMono} -> (fun side ->
-			let off = unpackBits side 0 8 in
-			let g1 = unpackBits side  9 12 in
-			{
-				side_raw = side;
-				side_offset = off;
-				side_bits = [| g1 |];
-				side_bytes = (g1) asr 3;
-			}
-		)
-		| _ -> (fun side ->
-			let off = unpackBits side 0 8 in
-			let g1 = unpackBits side 10 12 in
-			let g2 = unpackBits side 73 12 in
-			{
-				side_raw = side;
-				side_offset = off;
-				side_bits = [| g1; g2 |];
-				side_bytes = (g1 + g2) asr 3;
-			}
-		)
-	) in
-*)
+
 	(* Makes a string out of a given header and bitrate info *)
 	(* Always indicates no CRC *)
 	let string_of_header_and_bitrate = (
@@ -385,20 +339,44 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 	
 
 	let print_bitrate a = printf "{\n num: %d\n pad: %B\n size: %d\n data: %d\n index: %d\n}\n" a.bitrate_num a.bitrate_padding a.bitrate_size a.bitrate_data a.bitrate_index in
-(*
-	print_bitrate (number_to_bitrate 127 0);
-	print_bitrate (number_to_bitrate 127 1);
-	print_bitrate (number_to_bitrate 127 2);
-	print_bitrate (number_to_bitrate 127 3);
-	print_bitrate (bytes_to_bitrate (416  - 36));
-	print_bitrate (bytes_to_bitrate (417  - 36));
-	print_bitrate (bytes_to_bitrate (418  - 36));
-	print_bitrate (bytes_to_bitrate (1042 - 36));
-	print_bitrate (bytes_to_bitrate (1044 - 36));
-	print_bitrate (bytes_to_bitrate (1045 - 36));
-	print_bitrate (bytes_to_bitrate 1046);
-	failwith "12345";
-*)
+
+	(* Pretty-printer for time from a frame number *)
+	let string_time_of_frame =
+		let frame_time_mult = match k.header_samplerate with
+			| S48000 | S24000 -> 0.024
+			| S44100 | S22050 -> 0.0261224489795918
+			| S32000 | S16000 -> 0.036
+			| S12000          -> 0.048
+			| S11025          -> 0.0522448979591837
+			| S8000           -> 0.072
+		in
+(*		let mul_pair (a, b) c = (a *. c, b *. c) in*)
+		fun frame_num -> (
+			let s_float = float_of_int frame_num *. frame_time_mult in
+			let (s_floatfrac, s_floatint) = modf s_float in
+			let s_cents = int_of_float (s_floatfrac *. 100.0) in
+			let s_unnormal = int_of_float s_floatint in
+			if s_unnormal < 60 then (
+				sprintf "0:%02d.%02d" s_unnormal s_cents
+			) else (
+				let s_normal = s_unnormal mod 60 in
+				let m_unnormal = s_unnormal / 60 in
+				if m_unnormal < 60 then (
+					sprintf "%d:%02d.%02d" m_unnormal s_normal s_cents
+				) else (
+					let m_normal = m_unnormal mod 60 in
+					let h_unnormal = m_unnormal / 60 in
+					if h_unnormal < 24 then (
+						sprintf "%d:%02d:%02d.%02d" h_unnormal m_normal s_normal s_cents
+					) else (
+						let h_normal = h_unnormal mod 24 in
+						let d_unnormal = h_unnormal / 24 in
+						sprintf "%dd %02d:%02d:%02d.%02d" d_unnormal h_normal m_normal s_normal s_cents
+					)
+				)
+			)
+		)
+	in
 
 	let bit_blit = (
 		let rec b s1 o1 s2 o2 l = (
@@ -468,7 +446,10 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 				) else (
 					(* UH-OH! Need to do a bit-blit *)
 					let out = String.create output_length_bytes in
-					out.[output_length_bytes - 1] <- '\x00'; (* Zero the last byte so that no random memory junk gets in after the data bits *)
+					if output_length_bytes > 0 then (
+						(* Zero the last byte so that no random memory junk gets in after the data bits *)
+						out.[output_length_bytes - 1] <- '\x00';
+					);
 					bit_blit reservoir output_offset_bits out 0 (first_granule_bits + second_granule_bits);
 					
 (*					let first_byte_of_rest_of_reservoir = (output_offset_bits + first_granule_bits + second_granule_bits + 7) asr 3 in*)
@@ -526,7 +507,10 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 				) else (
 					(* bit-blit! *)
 					let out = String.create output_length_bytes in
-					out.[output_length_bytes - 1] <- '\x00'; (* Zero the last byte so that no random memory junk gets in after the data bits *)
+					if output_length_bytes > 0 then (
+						(* Zero the last byte so that no random memory junk gets in after the data bits *)
+						out.[output_length_bytes - 1] <- '\x00';
+					);
 					bit_blit reservoir output_offset_bits out 0 (new_a + new_b + new_c + new_d);
 					
 (*					let first_byte_of_rest_of_reservoir = (output_offset_bits + new_a + new_b + new_c + new_d + 7) asr 3 in*)
@@ -566,7 +550,10 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 					String.sub reservoir (output_offset_bits asr 3) output_length_bytes
 				) else (
 					let out = String.create output_length_bytes in
-					out.[output_length_bytes - 1] <- '\x00'; (* Zero the last byte so that no random memory junk gets in after the data bits *)
+					if output_length_bytes > 0 then (
+						(* Zero the last byte so that no random memory junk gets in after the data bits *)
+						out.[output_length_bytes - 1] <- '\x00';
+					);
 					bit_blit reservoir output_offset_bits out 0 granule_bits;
 					
 (*					let first_byte_of_rest_of_reservoir = (output_offset_bits + granule_bits + 7) asr 3 in*)
@@ -610,7 +597,10 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 					String.sub reservoir (output_offset_bits asr 3) output_length_bytes
 				) else (
 					let out = String.create output_length_bytes in
-					out.[output_length_bytes - 1] <- '\x00'; (* Zero the last byte so that no random memory junk gets in after the data bits *)
+					if output_length_bytes > 0 then (
+						(* Zero the last byte so that no random memory junk gets in after the data bits *)
+						out.[output_length_bytes - 1] <- '\x00';
+					);
 					bit_blit reservoir output_offset_bits out 0 (new_a + new_b);
 					
 (*					let first_byte_of_rest_of_reservoir = (output_offset_bits + new_a + new_b + 7) asr 3 in*)
@@ -730,7 +720,7 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 		match frame_stuff with
 		| Some (_, if_now, (wanted_at, got_at)) -> (
 			if debug_queue then printf "FRAME %d\n" frame_num;
-			
+
 			(* This is not correct for some files when a frame is larger than 1% of the whole file length *)
 			(* However, these files must be fairly short (1000 frames in the worst case) when it goes very fast anyway *)
 			let next_update_percent = if float_of_int in_obj#pos > float_of_int in_obj#length /. 100. *. float_of_int update_percent then (
@@ -745,14 +735,29 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 			let combined_bit_reservoir = bit_reservoir_so_far ^ if_now.if_data_raw in
 			let (new_side_info, new_data_string, buffer_error) = (
 				let start_offset = String.length bit_reservoir_so_far - side.side_offset in
-				
+
 				let (side_use, data_use, everythings_ok) = side_info_find_ok side combined_bit_reservoir start_offset in
-		
-				
+
+
 				if recompress && everythings_ok then (
 					(* FIX THIS! *)
 					try
 						let (q, recompress_error) = recompress_frame ~debug:debug_recompress {f1_num = frame_num; f1_header = if_now.if_header; f1_side = side_use; f1_data = data_use; f1_pad_exact = None} in
+						if recompress_error then (
+(*
+							let frame_time = (float_of_int frame_num) *. (match k.header_samplerate with
+								| S48000 | S24000 -> 0.024
+								| S44100 | S22050 -> 0.0261224489795918
+								| S32000 | S16000 -> 0.036
+								| S12000          -> 0.048
+								| S11025          -> 0.0522448979591837
+								| S8000           -> 0.072
+							) in
+							printf "\rWARNING: Decompression error on frame %d at ~%.2fs\n" frame_num frame_time;
+*)
+							printf "\rWARNING: Decompression error on frame %d at %s\n" frame_num (string_time_of_frame frame_num);
+							incr recompress_errors_ref;
+						);
 						if String.length q.f1_data > String.length data_use then (
 							(* If the repacked frame is larger than the original, just use the original *)
 							if debug_queue then printf " Oops. The repacked frame is larger than the original (%d > %d); reusing the input frame\n" (String.length q.f1_data) (String.length data_use);
@@ -761,7 +766,10 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 							(q.f1_side, q.f1_data, not everythings_ok)
 						)
 					with
-						_ -> (side_use, data_use, not everythings_ok)
+						e -> (
+							if debug_queue || debug_recompress then printf " Oops. The repacking the frame failed with error \"%s\"\n" (Printexc.to_string e);
+							(side_use, data_use, not everythings_ok)
+						)
 				) else (
 					(side_use, data_use, not everythings_ok)
 				)
@@ -771,8 +779,8 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 			let new_bit_reservoir = if String.length combined_bit_reservoir < max_reservoir_size then combined_bit_reservoir else (
 				String.sub combined_bit_reservoir (String.length combined_bit_reservoir - max_reservoir_size) max_reservoir_size
 			) in
-
 			if wanted_at <> got_at then (
+(*
 				let frame_time = (float_of_int frame_num) *. (match k.header_samplerate with
 					| S48000 | S24000 -> 0.024
 					| S44100 | S22050 -> 0.0261224489795918
@@ -782,9 +790,12 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 					| S8000           -> 0.072
 				) in
 				printf "\rWARNING: Sync error on frame %d at ~%.2fs (wanted at %d, found at %d)\n" frame_num frame_time wanted_at got_at;
+*)
+				printf "\rWARNING: Sync error on frame %d at %s (wanted at %d, found at %d)\n" frame_num (string_time_of_frame frame_num) wanted_at got_at;
 				incr sync_errors_ref;
 			);
 			if buffer_error then (
+(*
 				let frame_time = (float_of_int frame_num) *. (match k.header_samplerate with
 					| S48000 | S24000 -> 0.024
 					| S44100 | S22050 -> 0.0261224489795918
@@ -794,6 +805,8 @@ let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_be
 					| S8000           -> 0.072
 				) in
 				printf "\rWARNING: Buffer over/underflow on frame %d at ~%.2fs\n" frame_num frame_time;
+*)
+				printf "\rWARNING: Buffer over/underflow on frame %d at %s\n" frame_num (string_time_of_frame frame_num);
 				incr buffer_errors_ref;
 			);
 
@@ -1345,6 +1358,6 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 	in_obj#close;
 	close_out out_file;
 
-	(!buffer_errors_ref,!sync_errors_ref)
+	(!buffer_errors_ref,!sync_errors_ref,!recompress_errors_ref)
 
 ;;
