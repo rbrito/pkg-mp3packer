@@ -1,0 +1,21 @@
+Debian packaging for mp3packer
+------------------------------
+
+A quick summary of how one can update the Debian packaging of
+mp3packer is to, assuming that one already has the appropriate
+build-dependencies, `devscripts`, `pristine-tar`, and `git-buildpackage`
+installed:
+
+    git clone git+ssh://git.debian.org/git/collab-maint/mp3packer.git
+    cd mp3packer
+    git branch upstream origin/upstream
+    git branch pristine-tar origin/pristine-tar
+    git-import-orig --uscan --pristine-tar
+    [ Make here some adaptations, like updating debian/patches, if needed ]
+    git-buildpackage --git-pristine-tar
+
+These are the important steps and may need to be changed according to
+deviations, say, in the release process of upstream releases (e.g., if
+upstream changes the location where the tarballs reside).
+
+ -- Rogério Brito <rbrito@ime.usp.br>, Sat, 20 Aug 2011 02:09:19 -0300
