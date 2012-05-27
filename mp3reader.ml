@@ -1,7 +1,7 @@
 open Mp3types;;
 open Mp3read;;
 
-let in_obj = new mp3read_new ~debug:false Sys.argv.(1);;
+let in_obj = new mp3read_ptr ~debug:false Sys.argv.(1);;
 
 
 let (new_req, first_frame, (first_wanted_at, first_got_at), in_xing_option) = (

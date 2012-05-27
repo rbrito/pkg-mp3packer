@@ -432,7 +432,7 @@ let read_scalefactors_m2 ?(debug=false) ?(tabs="") is gc r =
 ;;
 
 (* It ends when r_at = r_to *)
-let read_quantizers_m1 ?(debug=false) ?(tabs="") k gc (r_str,r_at) r_to =
+let read_quantizers_m1 ?(debug=false) ?(tabs="") k gc (r_str,r_at) r_to recompress_freq_overflow_warn_ref =
 	if debug && debug_more then Printf.printf "Starting on %S at %d, going to %d\n" (String.sub (to_bin r_str) r_at (r_to - r_at)) r_at r_to;
 
 (*let debug = false in*)
@@ -524,18 +524,18 @@ if debug && debug_more then Printf.printf " Running read_from_table index=%d lef
 	if debug && debug_more then Printf.printf "DONE!\n";
 
 	(* Count1 *)
-	let rec read_count1_from_table index ht r = (
-		if debug && debug_more then Printf.printf "%d = %d? %B. %d = %d? %B.\n" (snd r) r_to (snd r = r_to) index num_quants (index = num_quants);
-		if snd r > r_to || index > num_quants then (
-			if debug && debug_more then Printf.printf " OOPS! Decoding count1 went a little overboard (pos %d > %d or length %d > %d)\n" (snd r) r_to index num_quants;
+	let rec read_count1_from_table index ht r_now = (
+		if debug && debug_more then Printf.printf "%d = %d? %B. %d = %d? %B.\n" (snd r_now) r_to (snd r_now = r_to) index num_quants (index = num_quants);
+		if snd r_now > r_to || index > num_quants then (
+			if debug && debug_more then Printf.printf " OOPS! Decoding count1 went a little overboard (pos %d > %d or length %d > %d)\n" (snd r_now) r_to index num_quants;
 			decoder_error_ref := true;
-			(index, r)
-		) else if snd r = r_to || index = num_quants then (
-			(index, r)
+			(index, r_now)
+		) else if snd r_now = r_to || index = num_quants then (
+			(index, r_now)
 		) else (
-			let ((v1,w1,x1,y1),r) = huffman_decode r ht global_ht_bits in
+			let ((v1,w1,x1,y1),r) = huffman_decode r_now ht global_ht_bits in
 
-			if debug && debug_more then Printf.printf " Found (%d,%d,%d,%d) for %d at %d (to %d)\n" v1 w1 x1 y1 index (snd r) r_to;
+			if debug && debug_more then Printf.printf " Found (%d,%d,%d,%d) for %d at %d (to %d)\n" v1 w1 x1 y1 index (snd r_now) r_to;
 
 			let (v_neg, r) = if v1 = 0 then (0, r) else (read_bits r 1) in
 			let (w_neg, r) = if w1 = 0 then (0, r) else (read_bits r 1) in
@@ -549,15 +549,33 @@ if debug && debug_more then Printf.printf " Running read_from_table index=%d lef
 			let x = if x_neg = 1 then ~- x1 else x1 in
 			let y = if y_neg = 1 then ~- y1 else y1 in
 
-			if (index + 4) > num_quants && x = 0 && y = 0 then (
-				(* If the ones above the max were 0, assume that the encoder just does that *)
-				if debug && debug_more then Printf.printf " Num_quants exceeded, but the values are 0 so ignore (length %d > %d)\n" (index + 4) num_quants;
+			if snd r > r_to then (
+				(* The file has been read too far *)
+				if debug && debug_more then Printf.printf " OOPS! Decoding count1 went a little overboard (pos %d > %d)\n" (snd r) r_to;
+
+				(* This should be an error *)
+				decoder_error_ref := true;
+
+				(index, r)
+			) else if (index + 4) > num_quants && x = 0 && y = 0 then (
+				(* If the frequencies above the max were 0, assume that the encoder just does that *)
+				if debug && debug_more then (
+					Printf.printf " Num_quants exceeded, but the values are 0 so ignore (length %d > %d)\n" (index + 4) num_quants
+				) else if !recompress_freq_overflow_warn_ref then (
+					Printf.printf "\rWARNING: too many frequencies; files may be decoded differently by some players\n";
+					recompress_freq_overflow_warn_ref := false;
+				);
 				out_quants.(index + 0) <- v;
 				out_quants.(index + 1) <- w;
 				(index + 2, r)
-			) else if snd r > r_to || (index + 4) > num_quants then (
+			) else if (index + 4) > num_quants then (
 				(* The stuff above the max frequency is not zero! This indicates badness *)
-				if debug && debug_more then Printf.printf " OOPS! Decoding count1 went a little overboard (pos %d > %d or length %d > %d)\n" (snd r) r_to (index + 4) num_quants;
+				if debug && debug_more then (
+					Printf.printf " OOPS! Decoding count1 went a little overboard (length %d > %d)\n" (index + 4) num_quants
+				) else if !recompress_freq_overflow_warn_ref then (
+					Printf.printf "\rWARNING: too many frequencies; files may be decoded differently by some players\n";
+					recompress_freq_overflow_warn_ref := false;
+				);
 
 				(* However, it is not considered an error as of 1.16; instead, the quants are set to 0 *)
 (*				decoder_error_ref := true;*)
@@ -733,7 +751,7 @@ WORKING;;
 (*********************************************************************************)
 (* DECODE FRAME DECODE FRAME DECODE FRAME DECODE FRAME DECODE FRAME DECODE FRAME *)
 (*********************************************************************************)
-let decode_frame ?(debug = false) f =
+let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 	let r = (f.f1_side.side_raw, 0) in
 	let (side_info, r) = match f.f1_header.header_id with
 		| MPEG1 -> (
@@ -939,11 +957,11 @@ let decode_frame ?(debug = false) f =
 
 			if debug then Printf.printf "%sGr0:\n" tab;
 			let (scf0,r0) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 [| false;false;false;false |]  None       side_info.side_gc.(0).(0) (f.f1_data, side_info.side_gc.(0).(0).gc_part2_3_offset) in
-			let (q0, error0) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r0 (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) in
+			let (q0, error0) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r0 (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
 
 			if debug then Printf.printf "%sGr1:\n" tab;
 			let (scf1,r1) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 side_info.side_scfi.(0)       (Some scf0) side_info.side_gc.(1).(0) (f.f1_data, side_info.side_gc.(1).(0).gc_part2_3_offset) in
-			let (q1, error1) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(0) r1 (side_info.side_gc.(1).(0).gc_part2_3_length + side_info.side_gc.(1).(0).gc_part2_3_offset) in
+			let (q1, error1) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(0) r1 (side_info.side_gc.(1).(0).gc_part2_3_length + side_info.side_gc.(1).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
 
 			(
 				M1_frame_data {
@@ -973,23 +991,19 @@ let decode_frame ?(debug = false) f =
 
 			if debug then Printf.printf "%sGr0 Ch0:\n" tab;
 			let (scf00,r00) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 [| false;false;false;false |]  None        side_info.side_gc.(0).(0) (f.f1_data, side_info.side_gc.(0).(0).gc_part2_3_offset) in
-			let (q00,error00) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r00 (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) in
-(*			let (q00,error00) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r00 (side_info.side_gc.(1).(1).gc_part2_3_length + side_info.side_gc.(1).(1).gc_part2_3_offset) in*)
+			let (q00,error00) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r00 (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
 
 			if debug then Printf.printf "%sGr0 Ch1:\n" tab;
 			let (scf01,r01) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 [| false;false;false;false |]  None        side_info.side_gc.(0).(1) (f.f1_data, side_info.side_gc.(0).(1).gc_part2_3_offset) in
-			let (q01,error01) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(1) r01 (side_info.side_gc.(0).(1).gc_part2_3_length + side_info.side_gc.(0).(1).gc_part2_3_offset) in
-(*			let (q01,error01) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(1) r01 (side_info.side_gc.(1).(1).gc_part2_3_length + side_info.side_gc.(1).(1).gc_part2_3_offset) in*)
+			let (q01,error01) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(1) r01 (side_info.side_gc.(0).(1).gc_part2_3_length + side_info.side_gc.(0).(1).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
 
 			if debug then Printf.printf "%sGr1 Ch0:\n" tab;
 			let (scf10,r10) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 side_info.side_scfi.(0)       (Some scf00) side_info.side_gc.(1).(0) (f.f1_data, side_info.side_gc.(1).(0).gc_part2_3_offset) in
-			let (q10,error10) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(0) r10 (side_info.side_gc.(1).(0).gc_part2_3_length + side_info.side_gc.(1).(0).gc_part2_3_offset) in
-(*			let (q10,error10) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(0) r10 (side_info.side_gc.(1).(1).gc_part2_3_length + side_info.side_gc.(1).(1).gc_part2_3_offset) in*)
+			let (q10,error10) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(0) r10 (side_info.side_gc.(1).(0).gc_part2_3_length + side_info.side_gc.(1).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
 
 			if debug then Printf.printf "%sGr1 Ch1:\n" tab;
 			let (scf11,r11) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 side_info.side_scfi.(1)       (Some scf10) side_info.side_gc.(1).(1) (f.f1_data, side_info.side_gc.(1).(1).gc_part2_3_offset) in
-			let (q11,error11) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(1) r11 (side_info.side_gc.(1).(1).gc_part2_3_length + side_info.side_gc.(1).(1).gc_part2_3_offset) in
-(*			let (q11,error11) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(1) r11 (side_info.side_gc.(1).(1).gc_part2_3_length + side_info.side_gc.(1).(1).gc_part2_3_offset) in*)
+			let (q11,error11) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(1) r11 (side_info.side_gc.(1).(1).gc_part2_3_length + side_info.side_gc.(1).(1).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
 
 			(
 				M1_frame_data {
@@ -1014,7 +1028,7 @@ let decode_frame ?(debug = false) f =
 
 			if debug then Printf.printf "%sGr: (USING MPEG1 QUANTIZER FUNCTION)\n" tab;
 			let (scf, r) = read_scalefactors_m2 ~debug:debug ~tabs:tab2 false side_info.side_gc.(0).(0) (f.f1_data, side_info.side_gc.(0).(0).gc_part2_3_offset) in
-			let (q, error) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) in
+			let (q, error) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
 
 			(
 				M2_frame_data {
@@ -1043,11 +1057,11 @@ let decode_frame ?(debug = false) f =
 			(* Remember that the IS should only be set on the right channel; the left channel uses the same scalefactors as non-IS GCs *)
 			if debug then Printf.printf "%sGr0: (USING MPEG1 QUANTIZER READER)\n" tab;
 			let (scf0, r0) = read_scalefactors_m2 ~debug:debug ~tabs:tab2         false         side_info.side_gc.(0).(0) (f.f1_data, side_info.side_gc.(0).(0).gc_part2_3_offset) in
-			let (q0, error0) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r0 (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) in
+			let (q0, error0) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r0 (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
 
 			if debug then Printf.printf "%sGr1: (USING MPEG1 QUANTIZER READER)\n" tab;
 			let (scf1, r1) = read_scalefactors_m2 ~debug:debug ~tabs:tab2 f.f1_header.header_is side_info.side_gc.(0).(1) (f.f1_data, side_info.side_gc.(0).(1).gc_part2_3_offset) in
-			let (q1, error1) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(1) r1 (side_info.side_gc.(0).(1).gc_part2_3_length + side_info.side_gc.(0).(1).gc_part2_3_offset) in
+			let (q1, error1) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(1) r1 (side_info.side_gc.(0).(1).gc_part2_3_length + side_info.side_gc.(0).(1).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
 
 			(
 				M2_frame_data {
@@ -2637,13 +2651,13 @@ let encode_frame ?(debug=false) d =
 	)
 ;;
 
-let recompress_frame ?(debug = false) f =
+let recompress_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 
 (*
 	Printf.printf "%d\n" f.f1_num;
 	Printf.printf " Input frame:  \"%s\"\n" (to_hex f.f1_data);
 *)
-	let (decoded, decoder_error) = decode_frame ~debug:debug f in
+	let (decoded, decoder_error) = decode_frame ~debug:debug f recompress_freq_overflow_warn_ref in
 
 	if debug then Printf.printf "Decoder error? %B\n" decoder_error;
 

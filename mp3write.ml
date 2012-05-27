@@ -28,6 +28,7 @@ class virtual virt_mp3write =
 	end
 ;;
 
+(*
 class mp3write_pervasive out_file =
 	object
 		inherit virt_mp3write
@@ -40,12 +41,13 @@ class mp3write_pervasive out_file =
 
 	end
 ;;
+*)
 
 class mp3write_unix ?(flags=[Unix.O_EXCL]) out_file =
 	object(o)
 		inherit virt_mp3write
 
-		val handle = Unix.openfile out_file (Unix.O_WRONLY :: Unix.O_CREAT :: flags) 0o660
+		val handle = Unicode.openfile_utf8 out_file (Unix.O_WRONLY :: Unix.O_CREAT :: flags) 0o660
 		method output s r l = (
 			if l = 0 then () else (
 				let wrote = Unix.write handle s r l in
