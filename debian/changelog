@@ -1,11 +1,13 @@
-mp3packer (1.25-1~1.gbp2a0171) UNRELEASED; urgency=low
+mp3packer (1.25-1~2.gbp160f76) UNRELEASED; urgency=low
 
-  ** SNAPSHOT build @2a01715eb49c2fb643653e8b673cde425405e994 **
+  ** SNAPSHOT build @160f76647c4de9a1cce50d83fdc220def713e323 **
 
   * Add gbp.conf to ease the workflow.
   * debian/README.source: Describe my usual workflow.
   * Imported Upstream version 1.25
   * debian/gbp.conf: Remove git IDs to avoid pollution of the changelogs.
+  * debian/patches: Remove obsolete patch.
+  * debian/patches: Fix generation of dependencies.
 
  -- Rogério Brito <rbrito@ime.usp.br>  Sun, 27 May 2012 00:38:54 -0300
 
