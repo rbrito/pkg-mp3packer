@@ -22,18 +22,50 @@ open Mp3info;;
 
 open Mp3types;;
 
+
+Unicode.set_utf8_output ();;
+
+
+
 (*
 let t1 = Unix.gettimeofday ();;
 *)
-let version = "1.23-234";;
+let version = "1.25-237";;
 
 let padding = Printf.sprintf "mp3packer%s\n" version;;
 
-let usage_head = Printf.sprintf "\nMP3 Packer version %s\nCopyright 2006-2008 Reed \"Omion\" Wilson\nThis program is covered under the GNU GPL.\nSee gpl.txt or mp3packer.html for more information\nNumber of processors detected: %d\n" version Mp3types.detected_processors;;
+let usage_head = Printf.sprintf "\nMP3 Packer version %s%s\nCopyright 2006-2008 Reed \"Omion\" Wilson\nThis program is covered under the GNU GPL.\nSee gpl.txt or mp3packer.html for more information\nNumber of processors detected: %d\n" version (if Sys.word_size > 32 then Printf.sprintf " (%d-bit)" Sys.word_size else "") Mp3types.detected_processors;;
 
 (*****************)
 (* PARSE OPTIONS *)
 (*****************)
+
+let argv = match Unicode.argv_opt with
+	| Unicode.Normal u -> u
+	| Unicode.Error _ -> Sys.argv
+;;
+
+(*
+(*Printf.printf ">>1:%s:11111111111111111111111111111111<<\n\n" (match Unicode.utf16_of_utf8 argv.(1) with;;*)
+Printf.printf "%!";;
+Unicode.silly_print (match Unicode.utf16_of_utf8 argv.(1) with | Unicode.Normal x -> x | _ -> "");;
+Unicode.silly_print argv.(1);;
+Unicode.silly_print argv.(1);;
+Printf.printf "%!";;
+let _ = read_line ();;
+Unicode.silly_print argv.(1);;
+Unicode.silly_print argv.(1);;
+Unicode.silly_print argv.(1);;
+Unicode.silly_print argv.(1);;
+let _ = read_line ();;
+Printf.printf ">>1:%s:1<<\n\n" argv.(1);;
+Printf.printf ">>2:%s:%s:2<<\n\n" argv.(1) argv.(1);;
+Printf.printf ">>3:%s:%s:%s:3<<\n\n" argv.(1) argv.(1) argv.(1);;
+Printf.printf ">>4:%s:%s:%s:%s:4<<\n\n" argv.(1) argv.(1) argv.(1) argv.(1);;
+exit 4567;;
+*)
+
+
 type keep_ok_t = Keep_ok_output | Keep_ok_both;;
 type keep_notok_t = Keep_notok_input | Keep_notok_output | Keep_notok_both;;
 
@@ -113,22 +145,33 @@ let args = Arg.align [
 
 
 
-Arg.parse args (fun w ->
-	let x = strip_trailing_slash w in
-	match (!in_name_ref, !out_name_ref, find_file x) with
-(*	| (None, None, None) -> (failwith (Printf.sprintf "'%s' does not exist" x))*)
-	| (Some (IO_File _), None, None) -> out_name_ref := Some (IO_File x)
-	| (Some (IO_File _), None, Some Unix.S_REG) -> out_name_ref := Some (IO_File x) (* Output file already exists *)
-	| (Some (IO_File _), None, Some Unix.S_DIR) -> out_name_ref := Some (IO_Dir x) (* Use the same name, but in a different directory *)
-	| (Some (IO_Dir _), None, None) -> out_name_ref := Some (IO_Dir x) (* Make up a directory *)
-	| (Some (IO_Dir _), None, Some Unix.S_REG) -> out_name_ref := Some (IO_File x) (* Directory -> file; not allowed, but catch later *)
-	| (Some (IO_Dir _), None, Some Unix.S_DIR) -> out_name_ref := Some (IO_Dir x) (* One dir to another *)
-	| (Some _, Some _, _) -> Printf.printf "WARNING: too many arguments; '%s' ignored\n" x
-	| (None, _, None) -> Printf.printf "WARNING: '%s' does not exist; ignoring\n" x
-	| (None, _, Some Unix.S_REG) -> in_name_ref := Some (IO_File x)
-	| (None, _, Some Unix.S_DIR) -> in_name_ref := Some (IO_Dir x)
-	| (_, _, Some _) -> (failwith (Printf.sprintf "'%s' is not a file or directory" x))
-) usage_head;;
+try
+	Arg.parse_argv argv args (fun w ->
+		let x = strip_trailing_slash w in
+		match (!in_name_ref, !out_name_ref, find_file x) with
+(*		| (None, None, None) -> (failwith (Printf.sprintf "'%s' does not exist" x))*)
+		| (Some (IO_File _), None, None) -> out_name_ref := Some (IO_File x)
+		| (Some (IO_File _), None, Some Unix.S_REG) -> out_name_ref := Some (IO_File x) (* Output file already exists *)
+		| (Some (IO_File _), None, Some Unix.S_DIR) -> out_name_ref := Some (IO_Dir x) (* Use the same name, but in a different directory *)
+		| (Some (IO_Dir _), None, None) -> out_name_ref := Some (IO_Dir x) (* Make up a directory *)
+		| (Some (IO_Dir _), None, Some Unix.S_REG) -> out_name_ref := Some (IO_File x) (* Directory -> file; not allowed, but catch later *)
+		| (Some (IO_Dir _), None, Some Unix.S_DIR) -> out_name_ref := Some (IO_Dir x) (* One dir to another *)
+		| (Some _, Some _, _) -> Printf.printf "WARNING: too many arguments; '%s' ignored\n" x
+		| (None, _, None) -> Printf.printf "WARNING: '%s' does not exist; ignoring\n" x
+		| (None, _, Some Unix.S_REG) -> in_name_ref := Some (IO_File x)
+		| (None, _, Some Unix.S_DIR) -> in_name_ref := Some (IO_Dir x)
+		| (_, _, Some _) -> (failwith (Printf.sprintf "'%s' is not a file or directory" x))
+	) usage_head
+with
+	| Arg.Bad msg -> (
+		Printf.eprintf "%s" msg;
+		exit 2
+	)
+	| Arg.Help msg -> (
+		Printf.printf "%s" msg;
+		exit 0;
+	)
+;;
 
 (* Set the priority *)
 ignore (Mp3types.nice !niceness_ref);;
@@ -206,8 +249,15 @@ let queue_state = {
 let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 	(* In order to generalize the do_base function, just ignore the second (output) string if user only wants info *)
 	fun a b -> (
-		let errors = do_info ~only_bitrate:!only_info_bitrate_ref ~debug_in:(!debug_in_ref) ~debug_info:(!debug_out_ref) a in
-		print_errors errors;
+		let t1 = Unix.gettimeofday () in
+		(try
+			let errors = do_info ~only_bitrate:!only_info_bitrate_ref ~debug_in:(!debug_in_ref) ~debug_info:(!debug_out_ref) a in
+			print_errors errors;
+		with
+			_ -> ()
+		);
+		let t2 = Unix.gettimeofday () in
+		Printf.printf "That took %f seconds\n" (t2 -. t1);
 		()
 (*		errors*)
 	)
@@ -223,7 +273,7 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 		Sys.rename a b;
 		let errors = (try
 (*			do_queue ~debug_in:(!debug_in_ref) ~debug_queue:(!debug_out_ref) ~min_bitrate:(!min_bitrate_ref) ~delete_beginning_junk:(!delete_begin_ref) ~delete_end_junk:(!delete_end_ref) ~padding:padding ~recompress:(!recompress_ref) ~debug_recompress:(!debug_recompress_ref) ~zero_whole_bad_frame:(!zero_whole_bad_frame_ref) ~minimize_bit_reservoir:minimize_bit_reservoir b a*)
-			do_queue queue_state (new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in b) (new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] a)
+			do_queue queue_state (*new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in b*)(new Mp3read.mp3read_ptr ~debug:queue_state.q_debug_in b) (new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] a)
 		with
 			(* The only time an End_of_file is reached is when no valid frames were found. Therefore, it's sort of a sync error... *)
 			End_of_file -> (Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1,0))
@@ -254,7 +304,7 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 	fun a b -> (
 		let errors = (try
 (*			do_queue ~debug_in:(!debug_in_ref) ~debug_queue:(!debug_out_ref) ~min_bitrate:(!min_bitrate_ref) ~delete_beginning_junk:(!delete_begin_ref) ~delete_end_junk:(!delete_end_ref) ~padding:padding ~recompress:(!recompress_ref) ~debug_recompress:(!debug_recompress_ref) ~zero_whole_bad_frame:(!zero_whole_bad_frame_ref) ~minimize_bit_reservoir:minimize_bit_reservoir a b*)
-			do_queue queue_state (new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in a) (new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] b)
+			do_queue queue_state (*new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in a*)(new Mp3read.mp3read_ptr ~debug:queue_state.q_debug_in a) (new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] b)
 		with
 			End_of_file -> (Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1,0))
 		) in
@@ -284,24 +334,23 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 );;
 
 
-
 let do_a_file (*?(force_overwrite = !force_overwrite_ref)*) fin1 fout1 =
 	let fin = strip_multiple_slashes fin1 in
 	let fout = strip_multiple_slashes fout1 in
 	if !only_info_bitrate_ref then (
 		(* Print nothing *)
 	) else if !only_info_ref then (
-		Printf.printf "\n*** '%s'\n" fin
+		Printf.printf "\n*** '"; Unicode.silly_print fin; Printf.printf "'\n";
 	) else if !rename_input_ref then (
-		Printf.printf "\n*** '%s' (backup to '%s')\n" fin fout
+		Printf.printf "\n*** '"; Unicode.silly_print fin; Printf.printf "' (backup to '"; Unicode.silly_print fout; Printf.printf "')\n";
 	) else (
-		Printf.printf "\n*** '%s' -> '%s'\n" fin fout
+		Printf.printf "\n*** '"; Unicode.silly_print fin; Printf.printf "' -> '"; Unicode.silly_print fout; Printf.printf "'\n";
 	);
 	(match (find_file fin, find_file fout, !force_overwrite_ref) with
-		| (None, _, _) -> (Printf.printf " WARNING: file '%s' does not exist; ignoring\n" fin; ())
+		| (None, _, _) -> (Printf.printf " WARNING: file '"; Unicode.silly_print fin; Printf.printf "' does not exist; ignoring\n"; ())
 		| (Some Unix.S_REG, None, _) -> do_base fin fout
 		| (Some Unix.S_REG, Some Unix.S_REG, false) when not !only_info_ref -> (
-			Printf.printf "Do you really want to overwrite '%s'? (y/n)\n" fout;
+			Printf.printf "Do you really want to overwrite '"; Unicode.silly_print fout; Printf.printf "'? (y/n)\n";
 			let answer = read_line () in
 			if String.length answer > 0 && (answer.[0] = 'y' || answer.[0] = 'Y') then (
 				do_base fin fout
@@ -311,7 +360,7 @@ let do_a_file (*?(force_overwrite = !force_overwrite_ref)*) fin1 fout1 =
 			)
 		)
 		| (Some Unix.S_REG, Some Unix.S_REG, _) -> do_base fin fout
-		| _ -> (Printf.printf "WARNING: Invalid mapping from '%s' to '%s'\n" fin fout; ())
+		| _ -> (Printf.printf "WARNING: Invalid mapping from '"; Unicode.silly_print fin; Printf.printf "' to '"; Unicode.silly_print fout; Printf.printf "'\n"; ())
 	)
 ;;
 
@@ -321,13 +370,12 @@ let do_a_file (*?(force_overwrite = !force_overwrite_ref)*) fin1 fout1 =
 let do_a_dir append_extension din1 dout1 =
 	let din = strip_multiple_slashes din1 in
 	let dout = strip_multiple_slashes dout1 in
-	let contents_in = Sys.readdir din in
+	let contents_in = Unicode.readdir_utf8 din in
 	Array.iter (fun fin ->
 		if Filename.check_suffix fin ".mp3" then (
 			(* The file has the right extension *)
 			if dout1 = "" && append_extension = "" then (
 				(* An invalid output directory has been passed; don't set the file. This is the case when the -i switch was used *)
-(*				Printf.printf "snatoheu";*)
 				let errors = do_a_file (Filename.concat din fin) "" in
 				()
 			) else if append_extension = "" || !do_files_with_appended_string_ref || not (Filename.check_suffix fin (append_extension ^ ".mp3")) then (
@@ -335,7 +383,7 @@ let do_a_dir append_extension din1 dout1 =
 				let errors = do_a_file (Filename.concat din fin) (Filename.concat dout (append_before_extension fin append_extension)) in
 				()
 			) else (
-				Printf.printf "SKIPPING FILE '%s'\n" (Filename.concat din fin);
+				Printf.printf "SKIPPING FILE '"; Unicode.silly_print (Filename.concat din fin); Printf.printf "'\n";
 			)
 		)
 	) contents_in;

@@ -253,7 +253,12 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 						req_samplerate   = (match reqs.req_samplerate   with Req_equal -> Req_matches [f.if_header.header_samplerate  ] | x -> x);
 						req_padding      = (match reqs.req_padding      with Req_equal -> Req_matches [f.if_header.header_padding     ] | x -> x);
 						req_private      = (match reqs.req_private      with Req_equal -> Req_matches [f.if_header.header_private     ] | x -> x);
-						req_channel_mode = (match reqs.req_channel_mode with Req_equal -> Req_matches [f.if_header.header_channel_mode] | x -> x);
+						req_channel_mode = (
+							match reqs.req_channel_mode with (* Consider both stereo modes to be equal *)
+							| Req_equal when f.if_header.header_channel_mode = ChannelStereo || f.if_header.header_channel_mode = ChannelJoint -> Req_matches [ChannelStereo;ChannelJoint]
+							| Req_equal -> Req_matches [f.if_header.header_channel_mode]
+							| x -> x
+						);
 						req_ms           = (match reqs.req_ms           with Req_equal -> Req_matches [f.if_header.header_ms          ] | x -> x);
 						req_is           = (match reqs.req_is           with Req_equal -> Req_matches [f.if_header.header_is          ] | x -> x);
 						req_copyright    = (match reqs.req_copyright    with Req_equal -> Req_matches [f.if_header.header_copyright   ] | x -> x);
@@ -317,6 +322,7 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 					match o#get_frame_here req with
 					| Fp_none -> (
 						(* Oops. Tried to find a frame, but it didn't exist. Sync error *)
+						o#seek pos_now;
 						o#resync_here num_frames req
 					)
 					| Fp_eof -> None
@@ -477,7 +483,7 @@ if debug then (
 								)
 							)
 						) in (* (lame_perhaps, encoder) *)
-						
+
 						let xing = {
 							xingRawTag = tag_type ^ tag_guts;
 							xingTagType = tag_type;
@@ -542,7 +548,7 @@ if debug then (
 	end
 ;;
 
-
+(*
 class mp3read_new ?debug in_file =
 	object
 		inherit virt_mp3read ?debug:debug(* in_file*)
@@ -556,13 +562,13 @@ class mp3read_new ?debug in_file =
 
 	end
 ;;
-
+*)
 
 class mp3read_unix ?debug in_file =
 	object(o)
 		inherit virt_mp3read ?debug:debug
 
-		val handle = Unix.openfile in_file [Unix.O_RDONLY] 0o600
+		val handle = Unicode.openfile_utf8 in_file [Unix.O_RDONLY] 0o600
 		method seek i = ignore (Unix.lseek handle i Unix.SEEK_SET)
 		method pos = Unix.lseek handle 0 Unix.SEEK_CUR
 		method length = (
@@ -582,6 +588,44 @@ class mp3read_unix ?debug in_file =
 			)
 		)
 		method close = Unix.close handle
+	end
+;;
+
+
+class mp3read_ptr ?debug in_file =
+	object(o)
+		inherit virt_mp3read ?debug:debug
+
+		val handle = Unicode.openfile_utf8 in_file [Unix.O_RDONLY] 0o600
+		val mutable ptr = Ptr.make 0 0
+		val mutable pos = 0
+		val mutable len = 0
+
+		method seek i = pos <- i
+		method pos = pos
+		method length = len
+		method read s r l = (
+			if l = 0 then (
+				()
+			) else if pos < 0 || l < 0 then (
+				invalid_arg (Printf.sprintf "mp3read_ptr#read %d %d from %d (File length %d)" r l pos len)
+			) else if pos + l > len then (
+				raise End_of_file
+			) else (
+				Ptr.blit_to_string ptr pos s r l;
+				pos <- pos + l;
+			)
+		)
+		method close = (
+			ptr <- Ptr.make 0 0;
+			len <- 0;
+			Unix.close handle;
+		)
+
+		initializer (
+			ptr <- Ptr.map_handle handle 0 0 Ptr.Map_read_only;
+			len <- Unix.lseek handle 0 Unix.SEEK_END;
+		)
 	end
 ;;
 

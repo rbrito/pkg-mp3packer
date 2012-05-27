@@ -25,7 +25,8 @@ let (+=) a b = (a := !a + b);;
 
 let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name =
 (*	let t1 = Sys.time () in*)
-	let in_obj = new mp3read_new ~debug:debug_in in_name in
+	let in_obj = new mp3read_unix ~debug:debug_in in_name in
+(*	let in_obj = new mp3read_ptr ~debug:debug_in in_name in*)
 	
 (*
 	let (_, first_frame) = in_obj#find_next_frame in

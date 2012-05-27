@@ -89,11 +89,19 @@ let string_of_io = function
 	| IO_File x -> Printf.sprintf "File '%s'" x
 	| IO_Dir x -> Printf.sprintf "Dir '%s'" x
 ;;
+(*
 let find_file x = (try
 	Some (Unix.stat x).Unix.st_kind
 with
 	| Unix.Unix_error _ -> None
 );;
+*)
+let find_file x = (try
+	Some (Unicode.stat_utf8 x).Unix.st_kind
+with
+	| _ -> None
+);;
+
 
 
 

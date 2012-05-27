@@ -131,6 +131,8 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 	let sync_errors_ref = ref 0 in
 	(* The number of errors encountered while recompressing the frames (will be 0 without -z) *)
 	let recompress_errors_ref = ref 0 in
+	(* Set whether the recompress should warn about frequency overflows *)
+	let recompress_freq_overflow_warn_ref = ref (not state.q_silent) in
 
 (*
 	let in_obj = new mp3read_unix ~debug:debug_in in_name in
@@ -169,7 +171,7 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			req_ms           = Req_any;   (* MS and IS can change if channel_mode is JS, and are ignored otherwise *)
 			req_is           = Req_any;
 			req_copyright    = Req_any;
-			req_original     = Req_any;   (* Req_any has had some problems in the past *)
+			req_original     = Req_any;   (* Req_equal has had some problems in the past *)
 			req_emphasis     = Req_any;
 		} in
 		let (first_req, first_frame, (_ (* 0 *), first_got)) = in_obj#find_next_frame ~force_resync:true ~lame_search:true before_lame_reqs in
@@ -422,7 +424,9 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			let second_bit = first_bit + a in     (* The first bit of the second granule *)
 			let last_bit = second_bit + b in      (* The first bit after the second granule *)
 			let reservoir_length_in_bits = String.length reservoir lsl 3 in
+(*			let reservoir_length_in_bits = reservoir_unused_bytes lsl 3 in*)
 
+(*			Printf.printf "BOOGA got %d,%d,%d bit offset with %d bits available\n" first_bit second_bit last_bit reservoir_length_in_bits;*)
 
 			let (first_granule_ok, second_granule_ok) = (
 				(* The first granule's OK if there's no data (always known) or if the first and second bits are in the string *)
@@ -435,12 +439,14 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			
 			let first_granule_bits = if first_granule_ok then max 0 a else 0 in
 			let second_granule_bits = if second_granule_ok then max 0 b else 0 in
-			
+
+(*			Printf.printf "BOOGA OK? %B %B\n" first_granule_ok second_granule_ok;*)
+
 			(* The beginning of the valid data *)
 			(* (the end of the valid data is output_offset + first_granule_bits + second_granule_bits) *)
 			(* If neither granule is good, set to 0 rather than last_bit since last_bit may result in a substring off the end of the string, but with length 0 *)
 			let output_offset_bits = if first_granule_ok then first_bit else if second_granule_ok then second_bit else 0 in
-			
+
 			let output_raw = String.copy input_side.side_raw in
 			if not first_granule_ok then (
 				(* Zero out the first granule's data *)
@@ -482,7 +488,7 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			let second_bit = first_bit + a + b in
 			let last_bit = second_bit + c + d in
 			let reservoir_length_in_bits = String.length reservoir lsl 3 in
-			
+
 			let (first_granule_ok, second_granule_ok) = (
 				let fgok = (first_bit = second_bit || (first_bit >= 0 && second_bit <= reservoir_length_in_bits)) in
 				let sgok = (second_bit = last_bit || (second_bit >= 0 && last_bit <= reservoir_length_in_bits)) in
@@ -539,9 +545,9 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			let first_bit = input_offset lsl 3 in
 			let last_bit = first_bit + a in
 			let reservoir_length_in_bits = String.length reservoir lsl 3 in
-			
+
 			let granule_ok = (first_bit = last_bit || (first_bit >= 0 && last_bit <= reservoir_length_in_bits)) in
-			
+
 			let granule_bits = if granule_ok then max 0 a else 0 in
 			
 			let output_offset_bits = if granule_ok then first_bit else 0 in
@@ -580,12 +586,12 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			let reservoir_length_in_bits = String.length reservoir lsl 3 in
 			
 			let granule_ok = (first_bit = last_bit || (first_bit >= 0 && last_bit <= reservoir_length_in_bits)) in
-			
+
 			let new_a = if granule_ok then max 0 a else 0 in
 			let new_b = if granule_ok then max 0 b else 0 in
 			
 			let output_offset_bits = if granule_ok then first_bit else 0 in
-			
+
 			let output_raw = String.copy input_side.side_raw in
 			if not granule_ok then (
 				packBits output_raw  10 30 0;
@@ -727,17 +733,17 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 	(** QUEUE! **)
 	(************)
 	(************)
-	let rec input_to_q1 frame_num update_percent bit_reservoir_so_far = (
+	let rec input_to_q1 frame_num update_percent bit_reservoir_so_far bit_reservoir_so_far_unused = (
 		(* AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA *)
-		
+
 		if debug_queue then printf "\n";
-		
+
 		let frame_stuff = (try
 			Some (in_obj#find_next_frame new_req)
 		with
 			End_of_file -> None
 		) in
-		
+
 		match frame_stuff with
 		| Some (_, if_now, (wanted_at, got_at)) -> (
 			if debug_queue then printf "FRAME %d\n" frame_num;
@@ -754,20 +760,24 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 (*			let side = side_info_of_string if_now.if_side_raw in*)
 			let side = side_info_of_if if_now in
 			if debug_queue then (
+				Printf.printf " Reservoir bytes available: %d\n" bit_reservoir_so_far_unused;
+				Printf.printf " Reservoir bytes used: %d\n" side.side_offset;
 				Printf.printf " Data bits:%s\n" (Array.fold_left (fun a b -> Printf.sprintf "%s %d" a b) "" side.side_bits);
 				Printf.printf " Total data bits: %d\n" (Array.fold_left (+) 0 side.side_bits);
 			);
 			let combined_bit_reservoir = bit_reservoir_so_far ^ if_now.if_data_raw in
-			let (new_side_info, new_data_string, buffer_error) = (
+			let (new_side_info, new_data_string, buffer_error, new_reservoir_unused) = (
 				let start_offset = String.length bit_reservoir_so_far - side.side_offset in
 
 				let (side_use, data_use, everythings_ok) = side_info_find_ok side combined_bit_reservoir start_offset in
+(*				let everythings_ok = data_find_ok && side.side_offset <= bit_reservoir_so_far_unused in*)
 
+				let new_reservoir_unused = String.length combined_bit_reservoir - start_offset - String.length data_use in
 
 				if recompress && everythings_ok then (
 					(* FIX THIS! *)
 					try
-						let (q, recompress_error) = recompress_frame ~debug:debug_recompress {f1_num = frame_num; f1_header = if_now.if_header; f1_side = side_use; f1_data = data_use; f1_pad_exact = None} in
+						let (q, recompress_error) = recompress_frame ~debug:debug_recompress {f1_num = frame_num; f1_header = if_now.if_header; f1_side = side_use; f1_data = data_use; f1_pad_exact = None} recompress_freq_overflow_warn_ref in
 						if recompress_error then (
 (*
 							let frame_time = (float_of_int frame_num) *. (match k.header_samplerate with
@@ -786,17 +796,17 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 						if String.length q.f1_data > String.length data_use then (
 							(* If the repacked frame is larger than the original, just use the original *)
 							if debug_queue then printf " Oops. The repacked frame is larger than the original (%d > %d); reusing the input frame\n" (String.length q.f1_data) (String.length data_use);
-							(side_use, data_use, not everythings_ok)
+							(side_use, data_use, not everythings_ok, new_reservoir_unused)
 						) else (
-							(q.f1_side, q.f1_data, not everythings_ok)
+							(q.f1_side, q.f1_data, not everythings_ok, new_reservoir_unused)
 						)
 					with
 						e -> (
 							if debug_queue || debug_recompress then printf " Oops. The repacking the frame failed with error \"%s\"\n" (Printexc.to_string e);
-							(side_use, data_use, not everythings_ok)
+							(side_use, data_use, not everythings_ok, new_reservoir_unused)
 						)
 				) else (
-					(side_use, data_use, not everythings_ok)
+					(side_use, data_use, not everythings_ok, new_reservoir_unused)
 				)
 			) in
 
@@ -843,7 +853,7 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			if debug_queue then printf " A->B (found frame %d)\n" frame_num;
 			mark_q1 ();
 			if debug_queue then printf " A->A (found frame; after B)\n";
-			input_to_q1 (succ frame_num) next_update_percent new_bit_reservoir
+			input_to_q1 (succ frame_num) next_update_percent new_bit_reservoir new_reservoir_unused
 		)
 		| None -> (
 			if debug_queue then printf " A->H (no frame found)\n";
@@ -1199,7 +1209,7 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 	) in
 
 	if debug_queue then printf " A\n";
-	let total_frames = input_to_q1 0 1 "" in
+	let total_frames = input_to_q1 0 1 "" 0 in
 
 (*	if debug_queue then printf "Functional %d == Imperative %d???\n" total_frames !total_frames_ref;*)
 
@@ -1208,6 +1218,14 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 	(********************************)
 	(* EVERY FRAME HAS BEEN WRITTEN *)
 	(********************************)
+
+	(* See whether the input info matches the actual info *)
+	(match in_xing_option with
+		| Some {xingNumFrames = Some xing_frames} when xing_frames <> total_frames -> (
+			printf "\rWARNING: actual number of frames (%d) does not match the input info (%d)\n" total_frames xing_frames
+		)
+		| _ -> ()
+	);
 
 	(* Write the trailing non-MP3 data, if it is to be saved *)
 (*
