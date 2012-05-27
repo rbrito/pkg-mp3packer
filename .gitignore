@@ -1,3 +1,9 @@
 /.pc
 *~
+*.asm
+*.cma
+*.cmi
+*.cmo
+*.cmx
+*.cmxa
 *.o
