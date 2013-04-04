@@ -65,7 +65,7 @@ class mp3write_unix ?(flags=[Unix.O_EXCL]) out_file =
 
 
 class mp3write_unix_ptrref ?(flags=[Unix.O_EXCL]) out_file =
-	object(o)
+	object
 		val handle = Unicode.openfile_utf8 out_file (Unix.O_WRONLY :: Unix.O_CREAT :: flags) 0o660
 		method output s r l = Ptr.Ref.really_write handle s r l
 		method output_this s = Ptr.Ref.really_write_ref handle s

@@ -1,4 +1,4 @@
-open Mp3types;;
+open Types;;
 open Mp3read;;
 
 let in_obj = new mp3read_ptr ~debug:false Sys.argv.(1);;

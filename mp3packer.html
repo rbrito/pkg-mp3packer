@@ -50,7 +50,7 @@ Processes <code>in.mp3</code> according to <code>options</code> and saves the ou
   <dt><code>-s</code></dt>
   <dd>Strip non-MP3 data at the end of the file. Using this option will remove most tags and any incomplete last frames from the file.</dd>
   <dt><code>-z</code></dt>
-  <dd>This option makes mp3packer partially decode the audio in the file, optimize the data, then recode it. This method stops decoding before any lossy transformations take place, and therefore <em>the <code>-z</code> switch is still completely lossless</em>. MP3 files have a number of different methods to compress the data, and most encoders only choose between a few of them. The <code>-z</code> switch will do a brute-force search for the most efficient compression setting. This guarantees that each frame is as small as it can get, but it takes <em>much</em> longer to repack.</dd>
+  <dd>This option makes mp3packer partially decode the audio in the file, optimize the data, then recode it. This method stops decoding before any lossy transformations take place, and therefore <em>the <code>-z</code> switch is still completely lossless</em>. MP3 files have a number of different methods to compress the data, and most encoders only choose between a few of them. The <code>-z</code> switch will do a brute-force search for the most efficient compression setting. This guarantees that each frame is as small as it can get, but it takes longer to repack.</dd>
   <dt><code>--workers #</code></dt>
   <dd>Set the number of threads to use for <code>-z</code> processing. These workers will run in parallel with the rest of the program. 0 is a valid number, and corresponds to synchronous processing. The default is a function of the number of processors/cores the program detects, and will likely change in different versions of the program.</dd>
   <dt><code>-a "-vbr"</code></dt>
@@ -234,44 +234,34 @@ INFO:
     <th scope="col">Resultant minimum frame size: </th>
   </tr>
   <tr>
-    <td>0-31</td>
-    <td>unpadded 32kbps </td>
+    <td>0-31</td><td>unpadded 32kbps </td>
   </tr>
   <tr>
-    <td>32</td>
-    <td>exactly 32kbps </td>
+    <td>32</td><td>exactly 32kbps </td>
   </tr>
   <tr>
-    <td>33</td>
-    <td>padded 32kbps </td>
+    <td>33</td><td>padded 32kbps </td>
   </tr>
   <tr>
-    <td>34-39</td>
-    <td>unpadded 40kbps </td>
+    <td>34-39</td><td>unpadded 40kbps </td>
   </tr>
   <tr>
-    <td>40</td>
-    <td>exactly 40kbps </td>
+    <td>40</td><td>exactly 40kbps </td>
   </tr>
   <tr>
-    <td>41</td>
-    <td>padded 40kbps </td>
+    <td>41</td><td>padded 40kbps </td>
   </tr>
   <tr>
-    <td>42-47</td>
-    <td>unpadded 48kbps </td>
+    <td>42-47</td><td>unpadded 48kbps </td>
   </tr>
   <tr>
-    <td>48</td>
-    <td>exactly 48kbps </td>
+    <td>48</td><td>exactly 48kbps </td>
   </tr>
   <tr>
-    <td>49</td>
-    <td>padded 48kbps </td>
+    <td>49</td><td>padded 48kbps </td>
   </tr>
   <tr>
-    <td>50-63</td>
-    <td>unpadded 64kbps </td>
+    <td>50-63</td><td>unpadded 64kbps </td>
   </tr>
   <tr>
     <td>64</td>
@@ -290,40 +280,14 @@ INFO:
 <table border="1" cellspacing="0">
   <tr>
     <th scope="row">32000,&nbsp;44100,&nbsp;or&nbsp;48000kHz:</th>
-    <td>32</td>
-    <td>40</td>
-    <td>48</td>
-    <td>56</td>
-    <td>64</td>
-    <td>80</td>
-    <td>96</td>
-    <td>112</td>
-    <td>128</td>
-    <td>160</td>
-    <td>192</td>
-    <td>224</td>
-    <td>256</td>
-    <td>320</td>
+    <td>32</td><td>40</td><td>48</td><td>56</td><td>64</td><td>80</td><td>96</td><td>112</td><td>128</td><td>160</td><td>192</td><td>224</td><td>256</td><td>320</td>
   </tr>
   <tr>
     <th scope="row">Everything else: </th>
-    <td>8</td>
-    <td>16</td>
-    <td>24</td>
-    <td>32</td>
-    <td>40</td>
-    <td>48</td>
-    <td>56</td>
-    <td>64</td>
-    <td>80</td>
-    <td>96</td>
-    <td>112</td>
-    <td>128</td>
-    <td>144</td>
-    <td>160</td>
+    <td>8</td><td>16</td><td>24</td><td>32</td><td>40</td><td>48</td><td>56</td><td>64</td><td>80</td><td>96</td><td>112</td><td>128</td><td>144</td><td>160</td>
   </tr>
 </table>
-<p>If an exact bitrate is given, the minimum bitrate will switch between unpadded and padded frames in order to achieve exactly that bitrate. For 8, 12, 16, 24, 32, and 48kHz files, this uses all unpadded frames.</p>
+<p>If an exact bitrate is given, the minimum bitrate will switch between unpadded and padded frames as needed in order to achieve exactly that bitrate. For 8, 12, 16, 24, 32, and 48kHz files, this uses all unpadded frames.</p>
 <h4>The -r and -R switches:</h4>
 <p>After mp3packer has chosen an output bitrate for a given frame, there is generally a range of positions to put the actual data. The data can be packed as much as possible into the previous frame, or it can be set to fill up the current frame as much as possible.</p>
 <p>The default is to pack as far behind as possible if the <code>-b</code> switch is not given, since there is usually no problem filling up the frames. If a minimum bitrate is specified then the frames are pushed as far up as possible without affecting any of the following frames.</p>
@@ -331,9 +295,12 @@ INFO:
 <p>Note that these options do not affect file size or compatibility at all. It will only change the internal layout of the data in the frames.</p>
 <h3><a name="changelog" id="changelog">Changelog:</a></h3>
 <dl>
+	<dt>2.03 (2012-08-05)</dt>
+    <dd>Fixed a bug with the 32-bit build giving errors with files larger than 256MiB. It will still not work with files 1GiB or larger, but the warning is more user-friendly.
 	<dt>2.02 (2012-07-28)</dt>
-    <dd>Multi-threading is more efficient. <code>-z</code> processing can go 2-3x faster than 2.01 with quad-core processors.</dd>
-  <dt>2.01 (2012-07-15)</dt>
+    <dd>Multi-threading is more efficient. <code>-z</code> processing can go 2-3x faster than 2.01 with quad-core processors.<br />
+    Check the input frames' CRC if they have it.</dd>
+	<dt>2.01 (2012-07-15)</dt>
     <dd>Removed a debug line causing a file named pipe.bin to be created.</dd>
 	<dt>2.00 (2012-07-14)</dt>
     <dd>Re-made the <code>-z</code> processing to be multi-threaded and use SSE if available.</dd>
@@ -343,7 +310,7 @@ INFO:
     <dt></dt>
     <dt>1.25 (2012-02-24)</dt>
 	<dd>Support Unicode files and directories (names may not print correctly)<br />Made re-synchronization faster<br />Simple stereo and joint stereo frames are now considered equivalent for re-synchronization</dd>
-  <dt>1.24 (2012-02-16)</dt>
+	<dt>1.24 (2012-02-16)</dt>
 	<dd>Give warning messages in more cases where the output file may not exactly match the input file.<br />Change the handling of invalid frames to be more like Foobar2000.</dd>
 	<dt>1.23 (2011-08-14)</dt>
 	<dd>Fixed an invalid buffer operation related to the bug fixed in 1.22.</dd>

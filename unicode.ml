@@ -34,7 +34,7 @@ let active_of_utf8 x8 = match utf16_of_utf8_c x8 false with
 (* Like active_of_utf8, but returns the UTF8 string if an error occured *)
 let sprint_utf8 x8 = match active_of_utf8 x8 with
 	| Normal n -> n
-	| Error e -> x8
+	| Error _ -> x8
 ;;
 
 (* the length value is in WCHARS, not bytes! *)
@@ -146,9 +146,9 @@ let stat_utf8 = if win then (
 		| Normal name16 -> (
 			match stat_utf16_unsafe name16 with
 			| Normal s -> s
-			| Error e -> raise Not_found
+			| Error _ -> raise Not_found
 		)
-		| Error e -> invalid_arg "Unicode.stat_utf8"
+		| Error _ -> invalid_arg "Unicode.stat_utf8"
 	)
 ) else (
 	Unix.stat

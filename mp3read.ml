@@ -16,8 +16,7 @@
 	Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 *******************************************************************************)
 
-open Printf;;
-open Mp3types;;
+open Types;;
 open Pack;;
 
 
@@ -40,10 +39,7 @@ let header_of_ptrref p r =
 				let samplerate_index = b 20 2 in
 				if bitrate_index = 0 || bitrate_index = 15 then (p [Str " INVALID BITRATE"]; raise Not_found);
 				if samplerate_index = 3 then (p [Str " INVALID SAMPLERATE"]; raise Not_found);
-				match id with
-				| MPEG1  -> ([| 0;32;40;48;56;64;80;96;112;128;160;192;224;256;320 |].(bitrate_index), [| S44100;S48000;S32000 |].(samplerate_index))
-				| MPEG2  -> ([| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |].(bitrate_index), [| S22050;S24000;S16000 |].(samplerate_index))
-				| MPEG25 -> ([| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |].(bitrate_index), [| S11025;S12000; S8000 |].(samplerate_index))
+				((bitrate_index_of_id id).(bitrate_index), (samplerate_index_of_id id).(samplerate_index))
 			in
 			let padding = (b 22 1 = 1) in
 			let priv = (b 23 1 = 1) in
@@ -183,12 +179,6 @@ let side_info_of_if f = (
 
 let get_current_crc header side_raw =
 	if header.header_crc then (
-		let side_bytes = match (header.header_id, header.header_channel_mode) with
-			| (MPEG1, ChannelMono) -> 17
-			| (MPEG1, _) -> 32
-			| (_, ChannelMono) -> 9
-			| (_, _) -> 17
-		in
 		let validate_this = Ptr.Ref.append (Ptr.Ref.sub header.header_raw 2 2) side_raw in
 		Crc.mp3_create_ptrref validate_this 0xFFFF
 	) else (
@@ -198,6 +188,8 @@ let get_current_crc header side_raw =
 ;;
 
 
+
+(* Try to make this work with an Int64 thing *)
 class virtual virt_mp3read (*?(debug=false)*)(* in_file*) =
 	object(o)
 		method private virtual p : p_type list -> unit
@@ -216,9 +208,9 @@ class virtual virt_mp3read (*?(debug=false)*)(* in_file*) =
 			req_original     = Req_any;
 			req_emphasis     = Req_any;
 		}
-		val bitstream = Buffer.create 511
+(*		val bitstream = Buffer.create 511*)
 		val mutable frame_number = 0
-		val xing_tag = None
+(*		val xing_tag = None*)
 
 		val mutable first_frame_start = max_int
 		val mutable last_frame_end = 0
@@ -238,67 +230,15 @@ class virtual virt_mp3read (*?(debug=false)*)(* in_file*) =
 		method virtual read : string -> int -> int -> unit
 		method virtual read_ptrref : int -> Ptr.Ref.ref_t
 		method virtual close : unit
+
 (*		method virtual unix_handle : Unix.file_descr (* There should be a better way to do this *)*)
 
 		(* Take a Ptr.Ref.t and return Some xyz if it's a valid header string, None otherwise *)
 		method header_of_ptrref = header_of_ptrref o#p
-(*
-		method header_of_ptrref r = (
-			if Ptr.Ref.length r < 4 then None else (
-				try
-					let b = Ptr.Ref.get_bits r in
-					if b 0 11 <> 0x7FF then (if debug then printf " SYNC'S WRONG\n"; raise Not_found);
 
-					let id_index = b 11 2 in
-					if id_index = 1 then (if debug then printf " ID'S WRONG\n"; raise Not_found);
-					let id = mpeg_index.(id_index) in
-
-					if b 13 2 <> 1 then (if debug then printf " LAYER'S NOT 3\n"; raise Not_found);
-
-					let crc = (b 15 1 = 0) in
-
-					let (bitrate, samplerate) =
-						let bitrate_index = b 16 4 in
-						let samplerate_index = b 20 2 in
-						if bitrate_index = 0 || bitrate_index = 15 then (if debug then printf " INVALID BITRATE\n"; raise Not_found);
-						if samplerate_index = 3 then (if debug then printf " INVALID SAMPLERATE\n"; raise Not_found);
-						match id with
-						| MPEG1  -> ([| 0;32;40;48;56;64;80;96;112;128;160;192;224;256;320 |].(bitrate_index), [| S44100;S48000;S32000 |].(samplerate_index))
-						| MPEG2  -> ([| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |].(bitrate_index), [| S22050;S24000;S16000 |].(samplerate_index))
-						| MPEG25 -> ([| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |].(bitrate_index), [| S11025;S12000; S8000 |].(samplerate_index))
-					in
-					let padding = (b 22 1 = 1) in
-					let priv = (b 23 1 = 1) in
-					let channel_mode = channel_index.(b 24 2) in
-					let ms = (b 26 1 = 1) in
-					let is = (b 27 1 = 1) in
-					let copyright = (b 28 1 = 1) in
-					let original = (b 29 1 = 1) in
-					let emphasis = emphasis_index.(b 30 2) in
-					Some {
-						header_raw = r;
-						header_id = id;
-						header_crc = crc;
-						header_bitrate = bitrate;
-						header_samplerate = samplerate;
-						header_padding = padding;
-						header_private = priv;
-						header_channel_mode = channel_mode;
-						header_ms = ms;
-						header_is = is;
-						header_copyright = copyright;
-						header_original = original;
-						header_emphasis = emphasis;
-					}
-				with
-				| Not_found -> None
-			)
-		)
-*)
 		(* Get a frame at the current pos_in, assuming it satisfies the requirements *)
 		method get_frame_here reqs = (
 			let start_pos = o#pos in
-			let return_none () = (o#seek start_pos; Fp_none) in
 			o#p [Str "get_frame_here at "; Int start_pos];
 			try
 (*				let header_string = String.create 4 in*)
@@ -316,45 +256,34 @@ class virtual virt_mp3read (*?(debug=false)*)(* in_file*) =
 				| Some header -> (
 					(* Now match the requirements *)
 					let stringify_list str_fun l f = List.iter (fun x -> f (Str " "); f (Str (str_fun x))) l in
+					let handle_error p_name p_val p_stringify x =
+						o#p [Spaces 1; Str p_name; Spaces 1; p_val; Str " is not in ["; Fun (stringify_list p_stringify x); Str " ]"];
+						false
+					in
 					let found_match = match reqs with
-						| {req_id           = Req_matches x} when not (List.mem header.header_id x)           -> (o#p [Str " ID ";           Str (string_of_mpeg header.header_id);              Str " is not in ["; Fun (stringify_list string_of_mpeg x);                                  Str " ]"]; false)
-						| {req_crc          = Req_matches x} when not (List.mem header.header_crc x)          -> (o#p [Str " CRC ";          Bool header.header_crc;                             Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
-						| {req_bitrate      = Req_matches x} when not (List.mem header.header_bitrate x)      -> (o#p [Str " Bitrate ";      Int header.header_bitrate;                          Str " is not in ["; Fun (stringify_list string_of_int  x);                                  Str " ]"]; false)
-						| {req_samplerate   = Req_matches x} when not (List.mem header.header_samplerate x)   -> (o#p [Str " Samplerate ";   Int (int_of_samplerate header.header_samplerate);   Str " is not in ["; Fun (stringify_list (fun n -> string_of_int @@ int_of_samplerate n) x); Str " ]"]; false)
-						| {req_padding      = Req_matches x} when not (List.mem header.header_padding x)      -> (o#p [Str " Padding ";      Bool header.header_padding;                         Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
-						| {req_private      = Req_matches x} when not (List.mem header.header_private x)      -> (o#p [Str " Private ";      Bool header.header_private;                         Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
-						| {req_channel_mode = Req_matches x} when not (List.mem header.header_channel_mode x) -> (o#p [Str " Channel mode "; Str (string_of_channel header.header_channel_mode); Str " is not in ["; Fun (stringify_list string_of_channel x);                               Str " ]"]; false)
-						| {req_ms           = Req_matches x} when not (List.mem header.header_ms x)           -> (o#p [Str " MS ";           Bool header.header_ms;                              Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
-						| {req_is           = Req_matches x} when not (List.mem header.header_is x)           -> (o#p [Str " IS ";           Bool header.header_is;                              Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
-						| {req_copyright    = Req_matches x} when not (List.mem header.header_copyright x)    -> (o#p [Str " Copyright ";    Bool header.header_copyright;                       Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
-						| {req_original     = Req_matches x} when not (List.mem header.header_original x)     -> (o#p [Str " Original ";     Bool header.header_original;                        Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
-						| {req_emphasis     = Req_matches x} when not (List.mem header.header_emphasis x)     -> (o#p [Str " Emphasis ";     Str (string_of_emphasis header.header_emphasis);    Str " is not in ["; Fun (stringify_list string_of_emphasis x);                              Str " ]"]; false)
+(*						| {req_id           = Req_matches x} when not (List.mem header.header_id x)           -> handle_error "ID"           (Str (string_of_mpeg header.header_id)             ) string_of_mpeg x*)
+						| {req_id           = Req_matches x} when not (List.mem header.header_id x)           -> handle_error "ID"           (Str (string_of_mpeg header.header_id)             ) string_of_mpeg x
+						| {req_crc          = Req_matches x} when not (List.mem header.header_crc x)          -> handle_error "CRC"          (Bool header.header_crc                            ) string_of_bool x
+						| {req_bitrate      = Req_matches x} when not (List.mem header.header_bitrate x)      -> handle_error "Bitrate"      (Int header.header_bitrate                         ) string_of_int  x
+						| {req_samplerate   = Req_matches x} when not (List.mem header.header_samplerate x)   -> handle_error "Samplerate"   (Int (int_of_samplerate header.header_samplerate)  ) (fun n -> string_of_int @@ int_of_samplerate n) x
+						| {req_padding      = Req_matches x} when not (List.mem header.header_padding x)      -> handle_error "Padding"      (Bool header.header_padding                        ) string_of_bool x
+						| {req_private      = Req_matches x} when not (List.mem header.header_private x)      -> handle_error "Private"      (Bool header.header_private                        ) string_of_bool x
+						| {req_channel_mode = Req_matches x} when not (List.mem header.header_channel_mode x) -> handle_error "Channel mode" (Str (string_of_channel header.header_channel_mode)) string_of_channel x
+						| {req_ms           = Req_matches x} when not (List.mem header.header_ms x)           -> handle_error "MS"           (Bool header.header_ms                             ) string_of_bool x
+						| {req_is           = Req_matches x} when not (List.mem header.header_is x)           -> handle_error "IS"           (Bool header.header_is                             ) string_of_bool x
+						| {req_copyright    = Req_matches x} when not (List.mem header.header_copyright x)    -> handle_error "Copyright"    (Bool header.header_copyright                      ) string_of_bool x
+						| {req_original     = Req_matches x} when not (List.mem header.header_original x)     -> handle_error "Original"     (Bool header.header_original                       ) string_of_bool x
+						| {req_emphasis     = Req_matches x} when not (List.mem header.header_emphasis x)     -> handle_error "Emphasis"     (Str (string_of_emphasis header.header_emphasis)   ) string_of_emphasis x
 						| _ -> true
 					in
-(*
-					let found_match = match reqs with
-						| {req_id           = Req_matches x} when not (List.mem header.header_id x)           -> (if debug then printf " ID %s is not in [%s ]\n"           (string_of_mpeg header.header_id)              (List.fold_left (fun s n -> s ^ " " ^ (string_of_mpeg     n)) "" x); false)
-						| {req_crc          = Req_matches x} when not (List.mem header.header_crc x)          -> (if debug then printf " CRC %B is not in [%s ]\n"          header.header_crc                              (List.fold_left (fun s n -> s ^ " " ^ (string_of_bool     n)) "" x); false)
-						| {req_bitrate      = Req_matches x} when not (List.mem header.header_bitrate x)      -> (if debug then printf " Bitrate %d is not in [%s ]\n"      header.header_bitrate                          (List.fold_left (fun s n -> s ^ " " ^ (string_of_int      n)) "" x); false)
-						| {req_samplerate   = Req_matches x} when not (List.mem header.header_samplerate x)   -> (if debug then printf " Samplerate %d is not in [%s ]\n"   (int_of_samplerate header.header_samplerate)   (List.fold_left (fun s n -> s ^ " " ^ (string_of_int (int_of_samplerate n))) "" x); false)
-						| {req_padding      = Req_matches x} when not (List.mem header.header_padding x)      -> (if debug then printf " Padding %B is not in [%s ]\n"      header.header_padding                          (List.fold_left (fun s n -> s ^ " " ^ (string_of_bool     n)) "" x); false)
-						| {req_private      = Req_matches x} when not (List.mem header.header_private x)      -> (if debug then printf " Private %B is not in [%s ]\n"      header.header_private                          (List.fold_left (fun s n -> s ^ " " ^ (string_of_bool     n)) "" x); false)
-						| {req_channel_mode = Req_matches x} when not (List.mem header.header_channel_mode x) -> (if debug then printf " Channel mode %s is not in [%s ]\n" (string_of_channel header.header_channel_mode) (List.fold_left (fun s n -> s ^ " " ^ (string_of_channel  n)) "" x); false)
-						| {req_ms           = Req_matches x} when not (List.mem header.header_ms x)           -> (if debug then printf " MS %B is not in [%s ]\n"           header.header_ms                               (List.fold_left (fun s n -> s ^ " " ^ (string_of_bool     n)) "" x); false)
-						| {req_is           = Req_matches x} when not (List.mem header.header_is x)           -> (if debug then printf " IS %B is not in [%s ]\n"           header.header_is                               (List.fold_left (fun s n -> s ^ " " ^ (string_of_bool     n)) "" x); false)
-						| {req_copyright    = Req_matches x} when not (List.mem header.header_copyright x)    -> (if debug then printf " Copyright %B is not in [%s ]\n"    header.header_copyright                        (List.fold_left (fun s n -> s ^ " " ^ (string_of_bool     n)) "" x); false)
-						| {req_original     = Req_matches x} when not (List.mem header.header_original x)     -> (if debug then printf " Original %B is not in [%s ]\n"     header.header_original                         (List.fold_left (fun s n -> s ^ " " ^ (string_of_bool     n)) "" x); false)
-						| {req_emphasis     = Req_matches x} when not (List.mem header.header_emphasis x)     -> (if debug then printf " Emphasis %s is not in [%s ]\n"     (string_of_emphasis header.header_emphasis)    (List.fold_left (fun s n -> s ^ " " ^ (string_of_emphasis n)) "" x); false)
-						| _ -> true
-					in
-*)
+
 					if found_match then (
 						let frame_length = frame_length_of_header header in
 						let side_info_size = match (header.header_id, header.header_channel_mode) with
-							| (MPEG1, ChannelMono) -> 17
-							| (  _  , ChannelMono) ->  9
-							| (MPEG1,      _     ) -> 32
-							| (  _  ,      _     ) -> 17
+							| (MPEG1         , ChannelMono) -> 17
+							| ((MPEG2|MPEG25), ChannelMono) ->  9
+							| (MPEG1         ,      _     ) -> 32
+							| ((MPEG2|MPEG25),      _     ) -> 17
 						in
 						let data_raw_pos = (if header.header_crc then 6 else 4) + side_info_size in
 
@@ -367,7 +296,6 @@ class virtual virt_mp3read (*?(debug=false)*)(* in_file*) =
 						let frame = Ptr.Ref.append header_ptrref after_header in
 						o#p [Str "Frame ptr ref:"];
 						o#p [Str " "; Ptrref frame];
-						let frame_string = Ptr.Ref.to_string frame in
 
 						let side_raw = Ptr.Ref.sub frame (if header.header_crc then 6 else 4) side_info_size in
 
@@ -417,24 +345,44 @@ class virtual virt_mp3read (*?(debug=false)*)(* in_file*) =
 				match frame_perhaps with
 				| Fp_some f -> (
 					let new_pos = o#pos in
+					let equal_to_matches matches_list = function
+						| Req_equal -> Req_matches matches_list
+						| Req_any -> Req_any
+						| Req_matches x -> Req_matches x
+					in
 					let new_reqs = {
-						req_id           = (match reqs.req_id           with Req_equal -> Req_matches [f.if_header.header_id          ] | x -> x);
-						req_crc          = (match reqs.req_crc          with Req_equal -> Req_matches [f.if_header.header_crc         ] | x -> x);
-						req_bitrate      = (match reqs.req_bitrate      with Req_equal -> Req_matches [f.if_header.header_bitrate     ] | x -> x);
-						req_samplerate   = (match reqs.req_samplerate   with Req_equal -> Req_matches [f.if_header.header_samplerate  ] | x -> x);
-						req_padding      = (match reqs.req_padding      with Req_equal -> Req_matches [f.if_header.header_padding     ] | x -> x);
-						req_private      = (match reqs.req_private      with Req_equal -> Req_matches [f.if_header.header_private     ] | x -> x);
+(*						req_id           = (match reqs.req_id           with Req_equal -> Req_matches [f.if_header.header_id          ] | x -> x);*)
+						req_id           = equal_to_matches [f.if_header.header_id        ] reqs.req_id;
+						req_crc          = equal_to_matches [f.if_header.header_crc       ] reqs.req_crc;
+						req_bitrate      = equal_to_matches [f.if_header.header_bitrate   ] reqs.req_bitrate;
+						req_samplerate   = equal_to_matches [f.if_header.header_samplerate] reqs.req_samplerate;
+						req_padding      = equal_to_matches [f.if_header.header_padding   ] reqs.req_padding;
+						req_private      = equal_to_matches [f.if_header.header_private   ] reqs.req_private;
+						req_ms           = equal_to_matches [f.if_header.header_ms        ] reqs.req_ms;
+						req_is           = equal_to_matches [f.if_header.header_is        ] reqs.req_is;
+						req_copyright    = equal_to_matches [f.if_header.header_copyright ] reqs.req_copyright;
+						req_original     = equal_to_matches [f.if_header.header_original  ] reqs.req_original;
+						req_emphasis     = equal_to_matches [f.if_header.header_emphasis  ] reqs.req_emphasis;
 						req_channel_mode = (
-							match reqs.req_channel_mode with (* Consider both stereo modes to be equal *)
+							match f.if_header.header_channel_mode with
+							| ChannelStereo | ChannelJoint -> equal_to_matches [ChannelStereo; ChannelJoint] reqs.req_channel_mode
+							| ChannelMono -> equal_to_matches [ChannelMono] reqs.req_channel_mode
+							| ChannelDual -> equal_to_matches [ChannelDual] reqs.req_channel_mode
+(*
+							match (reqs.req_channel_mode, f.if_header.header_channel_mode) with (* Consider all stereo modes to be equal *)
+							| (Req_equal, ChannelStereo _) -> Req_matches [ChannelStereo StereoSimple; ChannelStereo StereoJoint; ChannelStereo StereoDual]
+							| (Req_equal, ChannelMono) -> Req_matches [ChannelMono]
 							| Req_equal when f.if_header.header_channel_mode = ChannelStereo || f.if_header.header_channel_mode = ChannelJoint -> Req_matches [ChannelStereo;ChannelJoint]
 							| Req_equal -> Req_matches [f.if_header.header_channel_mode]
 							| x -> x
+*)
+(*
+							match reqs.req_channel_mode with (* Consider all stereo modes to be equal *)
+							| Req_equal when f.if_header.header_channel_mode = ChannelStereo || f.if_header.header_channel_mode = ChannelJoint -> Req_matches [ChannelStereo;ChannelJoint]
+							| Req_equal -> Req_matches [f.if_header.header_channel_mode]
+							| x -> x
+*)
 						);
-						req_ms           = (match reqs.req_ms           with Req_equal -> Req_matches [f.if_header.header_ms          ] | x -> x);
-						req_is           = (match reqs.req_is           with Req_equal -> Req_matches [f.if_header.header_is          ] | x -> x);
-						req_copyright    = (match reqs.req_copyright    with Req_equal -> Req_matches [f.if_header.header_copyright   ] | x -> x);
-						req_original     = (match reqs.req_original     with Req_equal -> Req_matches [f.if_header.header_original    ] | x -> x);
-						req_emphasis     = (match reqs.req_emphasis     with Req_equal -> Req_matches [f.if_header.header_emphasis    ] | x -> x);
 					} in
 					o#p [Str " resync_here found frame "; Int (num_frames - more_frames); Str " here"];
 
@@ -458,10 +406,10 @@ class virtual virt_mp3read (*?(debug=false)*)(* in_file*) =
 					if start_pos + inky + 4 >= o#length then (
 						raise End_of_file;
 					) else (
-						find_sync_rec (succ inky)
+						find_sync_rec (inky + 1)
 					)
 				)
-				| Some (r,f) when inky = 0 -> (r, f, (start_pos, start_pos))
+(*				| Some (r,f) when inky = 0 -> (r, f, (start_pos, start_pos))*)
 				| Some (r,f)               -> (r, f, (start_pos, start_pos + inky))
 			) in
 
@@ -748,6 +696,11 @@ class mp3read_new ?debug in_file =
 ;;
 *)
 
+
+
+
+
+
 class mp3read_unix print_fun in_file =
 	object(o)
 		inherit virt_mp3read (*?debug:debug*)
@@ -781,9 +734,43 @@ class mp3read_unix print_fun in_file =
 	end
 ;;
 
+(*
+class mp3read_unix_64 print_fun in_file =
+	object(o)
+		inherit [int64] virt_mp3read (*?debug:debug*)
+		method private p = print_fun
+
+		val handle = Unicode.openfile_utf8 in_file [Unix.O_RDONLY] 0o600
+		method seek i = ignore (Unix.LargeFile.lseek handle i Unix.SEEK_SET)
+		method pos = Unix.LargeFile.lseek handle 0L Unix.SEEK_CUR
+		method length = (
+			let now = o#pos in
+			let posend = Unix.LargeFile.lseek handle 0L Unix.SEEK_END in
+			o#seek now;
+			posend
+		)
+		method read s r l = (
+			if l = 0 then () else (
+				let got = Unix.read handle s r l in
+				if got = 0 then (
+					raise End_of_file
+				) else (
+					o#read s (r + got) (l - got)
+				)
+			)
+		)
+		method read_ptrref l = (
+			let s = String.create l in
+			o#read s 0 l;
+			Ptr.Ref.of_string s
+		)
+		method close = Unix.close handle
+	end
+;;
+*)
 
 class mp3read_ptr print_fun in_file =
-	object(o)
+	object
 		inherit virt_mp3read (*?debug:debug*)
 		method private p = print_fun
 
@@ -834,7 +821,7 @@ class mp3read_ptr print_fun in_file =
 
 
 class mp3read_ptr_only print_fun ptr len =
-	object(o)
+	object
 		inherit virt_mp3read (*?debug:debug*)
 		method private p = print_fun
 
@@ -870,6 +857,7 @@ class mp3read_ptr_only print_fun ptr len =
 
 	end
 ;;
+
 
 (*
 ## Side info:

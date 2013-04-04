@@ -22,8 +22,7 @@ Before: 15.328 / 15.343
 *)
 
 
-open Mp3types;;
-open Pack;;
+open Types;;
 open Mp3framehuffman;;
 
 
@@ -287,7 +286,7 @@ type frame_data_t = M1_frame_data of m1_frame_data_t | M2_frame_data of m2_frame
 
 
 
-let print_side pin spaces s = ();;
+(*let print_side pin spaces s = ();;*)
 
 let print_side pin spaces s =
 	let p x = pin (Spaces spaces :: x) in
@@ -443,7 +442,6 @@ let read_quantizers state file_state k gc in_ptr r_at r_to =
 	let p = state.q_print_recompress in
 	let s = Ptr.Ref.new_seq (Ptr.Ref.of_ptr in_ptr) in
 	Ptr.Ref.set_seq s r_at;
-	let gs = get_seq s in
 (*let debug = false in*)
 
 	if state.q_debug_recompress then (
@@ -455,23 +453,6 @@ let read_quantizers state file_state k gc in_ptr r_at r_to =
 	let decoder_error_ref = ref false in
 (*	let out_quants = Array.make num_quants 0 in*)
 	let out_quants_16_ptr = Ptr.make (num_quants * 2) 16 in
-(*
-	let in_ptr = Ptr.make (Ptr.Ref.length s.Ptr.Ref.seq_ref + 5) 16 in
-	Ptr.Ref.blit_to_ptr s.Ptr.Ref.seq_ref 0 in_ptr 0 (Ptr.Ref.length s.Ptr.Ref.seq_ref);
-*)
-
-	let rec read_from_table index left hti linbits =
-		p [Str "Index = "; Int index; Str ", left = "; Int left];
-		let (new_ptr_loc, new_index) = Mp3framehuffman.decode_big_quants in_ptr s.Ptr.Ref.seq_at r_to out_quants_16_ptr index (index + 2 * left) hti decoder_error_ref in
-		p [Str "Got new index "; Int new_index];
-		if new_ptr_loc > r_to then (
-			p [Str "Oops. decode_big_quants went overboard (bit "; Int new_ptr_loc; Str " > target "; Int r_to; Str ")"];
-			decoder_error_ref := true;
-		);
-		Ptr.Ref.set_seq s new_ptr_loc;
-
-		new_index
-	in
 
 	let (region0, region1, region2, table0, table1, table2) = (match gc.gc_window with
 		| Window_normal w -> (
@@ -558,12 +539,12 @@ let read_scalefactors_m1 state scfi prev_scf_option gc s   file_state k in_ptr =
 	let p = state.q_print_recompress in
 	let make_initial_array = match (prev_scf_option, scfi) with
 		| (None, _) -> (fun x -> Array.make x 0)
-		| (Some y, [| false;false;false;false |]) -> (fun x -> Array.make x 0) (* If scfi indicates to not use anything from previous frame, just recreate the array. This helps for short blocks, when the array is the wrong length anyway *)
+		| (Some _, [| false;false;false;false |]) -> (fun x -> Array.make x 0) (* If scfi indicates to not use anything from previous frame, just recreate the array. This helps for short blocks, when the array is the wrong length anyway *)
 		| (Some y, _) -> (fun x -> Array.sub y 0 x)
 	in
 	let (bits1,bits2) = scalefactor_compress_m1.(gc.gc_scf_compress_index) in
 	let (num1,num2,scf_out) = match gc.gc_window with
-		| Window_normal x -> (
+		| Window_normal _ -> (
 			(* Normal *)
 			(11, 10, make_initial_array 21)
 		)
@@ -575,7 +556,7 @@ let read_scalefactors_m1 state scfi prev_scf_option gc s   file_state k in_ptr =
 			(* Short, mixed block *)
 			(17, 18, make_initial_array 35) (* Mixed blocks seem to have 36 scalefactors, but only 33 scalefactor bands. However, the way the windows are set up, there are a total of 35 scalefactor scales *)
 		)
-		| Window_other x -> (
+		| Window_other _ -> (
 			(* Short block *)
 			(18, 18, make_initial_array 36) (* Short blocks have 39 scalefactors, but only 36 scalefactor bands *)
 		)
@@ -718,15 +699,15 @@ let read_scalefactors_m2 state is gc s =
 (* REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME *)
 (************************************************************************************************************************)
 let rehuff_granule state (quant_ptr : Ptr.t) (*process_function*) gc (scf_bands_ptr : Ptr.t) = match gc.gc_window with
-	| Window_other w -> gc
-	| Window_normal w -> (
+	| Window_other _ -> gc
+	| Window_normal _ -> (
 		let p = state.q_print_recompress in
 		let process_function = match state.q_process_set with
 			| SSE41 -> find_best_config_sse41
 			| Set_base -> find_best_config_base
 		in
 
-		let (s_l1,s_l2,s_big,(s_count1num : int),s_t1,s_t2,s_t3,p1t1) = (
+		let (s_l1,s_l2,s_big,(*s_count1num : int*)_,s_t1,s_t2,s_t3,p1t1) = (
 
 			let (s_l1,s_l2,s_big,s_count1num,s_t1,s_t2,s_t3,p1t1) = process_function
 				quant_bits_ptr16
@@ -827,7 +808,7 @@ let decode_frame state file_state f =
 				let d = gs 1 in
 				let side_scfi = [| [| a = 1; b = 1; c = 1; d = 1 |] |] in
 				let (side_gc1, new_so_far) = read_gc 0 in
-				let (side_gc2, new_so_far) = read_gc new_so_far in
+				let (side_gc2,     _     ) = read_gc new_so_far in
 				{
 					side_main_data_begin = main_data;
 					side_scfi = side_scfi;
@@ -849,7 +830,7 @@ let decode_frame state file_state f =
 				let (side_gc1, new_so_far) = read_gc 0 in
 				let (side_gc2, new_so_far) = read_gc new_so_far in
 				let (side_gc3, new_so_far) = read_gc new_so_far in
-				let (side_gc4, new_so_far) = read_gc new_so_far in
+				let (side_gc4,     _     ) = read_gc new_so_far in
 				{
 					side_main_data_begin = main_data;
 					side_scfi = side_scfi;
@@ -926,7 +907,7 @@ let decode_frame state file_state f =
 				let main_data = gs 8 in
 				let _ = gs 2 in
 				let (side_gc1, new_so_far) = read_gc 0 in
-				let (side_gc2, new_so_far) = read_gc new_so_far in
+				let (side_gc2,     _     ) = read_gc new_so_far in
 				{
 					side_main_data_begin = main_data;
 					side_scfi = [| |];
@@ -937,8 +918,6 @@ let decode_frame state file_state f =
 	in (* defines side_info *)
 
 (*	print_side side_info;*)
-
-	let tab2 = tab ^ tab in
 
 	let decoded = (
 		let k = f.f1_header in
@@ -1146,18 +1125,17 @@ let decode_frame state file_state f =
 (**********************************************************************************************)
 (* ENCODE FRAME ENCODE FRAME ENCODE FRAME ENCODE FRAME ENCODE FRAME ENCODE FRAME ENCODE FRAME *)
 (**********************************************************************************************)
-let encode_frame state file_state d =
+let encode_frame state _(*file_state*) d =
 	let p = state.q_print_recompress in
 
 	let write_granule_m1 k s scfsi gc scf (*quants*) quants_ptr = (
-		let qi i = Ptr.get_int_of_16 quants_ptr (2 * i) in
 		(* Scalefactors *)
 		let (scf_bits1, scf_bits2) = scalefactor_compress_m1.(gc.gc_scf_compress_index) in
-		let (num1, num2) = (match gc.gc_window with
-			| Window_normal x -> (11,10)
+		let (num1, _(*num2*)) = (match gc.gc_window with
+			| Window_normal _ -> (11,10)
 			| Window_other x when x.other_block_type <> Block_type_short -> (11,10)
 			| Window_other x when x.other_mixed_block -> (17,18)
-			| Window_other x -> (18,18)
+			| Window_other _ -> (18,18)
 		) in
 		let rec write_scf i = (
 			let num_bits = if i < num1 then scf_bits1 else scf_bits2 in
@@ -1220,7 +1198,6 @@ let encode_frame state file_state d =
 	) in
 
 	let write_granule_m2 k s is gc scf (*quants*) quants_ptr = (
-		let qi i = Ptr.get_int_of_16 quants_ptr (2 * i) in
 		(* Just copy the original layout; I doubt there's much savings to be had here *)
 		let (bits0, bits1, bits2, bits3) = if is then (
 			scalefactor_compress_m2_is.(gc.gc_scf_compress_index)

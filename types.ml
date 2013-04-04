@@ -72,6 +72,8 @@ type p_type =
 	| Bool of bool
 	| Int of int
 	| IntN of int * int (* width, int *)
+	| Int0N of int * int (* 0-padded IntN *)
+(*	| Int64 of int64*)
 	| Hex of int * int (* width, int (always filled with 0) *)
 	| Float of float
 	| FloatN of int * float (* width, int -- like "%*f" *)
@@ -209,6 +211,17 @@ type xingTag_t = {
 	xingLame : lameTag_t option;
 };;
 
+(*
+type channel_stereo_t = StereoSimple | StereoJoint | StereoDual
+type channel_t = ChannelStereo of channel_stereo_t(* | ChannelJoint | ChannelDual*) | ChannelMono;;
+let channel_index = [| ChannelStereo StereoSimple ; ChannelStereo StereoJoint ; ChannelStereo StereoDual ; ChannelMono |];;
+let string_of_channel = function
+| ChannelStereo StereoSimple -> "ChannelStereo"
+| ChannelStereo StereoJoint  -> "ChannelJoint"
+| ChannelStereo StereoDual   -> "ChannelDual"
+| ChannelMono                -> "ChannelMono"
+;;
+*)
 type channel_t = ChannelStereo | ChannelJoint | ChannelDual | ChannelMono;;
 let channel_index = [| ChannelStereo ; ChannelJoint ; ChannelDual ; ChannelMono |];;
 let string_of_channel = function
@@ -217,6 +230,8 @@ let string_of_channel = function
 | ChannelDual   -> "ChannelDual"
 | ChannelMono   -> "ChannelMono"
 ;;
+
+
 
 type mpeg_t = MPEG1 | MPEG2 | MPEG25;;
 let mpeg_index = [| MPEG25 ; MPEG25 ; MPEG2 ; MPEG1 |];;
@@ -298,7 +313,7 @@ type header_t = {
 };;
 let frame_length_of_header h = match h.header_id with
 	| MPEG1 -> 144000 * h.header_bitrate / int_of_samplerate h.header_samplerate + (if h.header_padding then 1 else 0)
-	|   _   ->  72000 * h.header_bitrate / int_of_samplerate h.header_samplerate + (if h.header_padding then 1 else 0)
+	| MPEG2 | MPEG25 ->  72000 * h.header_bitrate / int_of_samplerate h.header_samplerate + (if h.header_padding then 1 else 0)
 ;;
 (* Hooray for byte seconds per frame kilobit! *)
 let bspfk_of_samplerate = function
@@ -313,18 +328,20 @@ let bspfk_of_samplerate = function
 	| S8000  -> 9.
 ;;
 let bitrate_index_of_id = function
-	| MPEG1 -> [| 0;32;40;48;56;64;80;96;112;128;160;192;224;256;320 |]
-	|   _   -> [| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |]
+	| MPEG1 ->          [| 0;32;40;48;56;64;80;96;112;128;160;192;224;256;320 |]
+	| MPEG2 | MPEG25 -> [| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |]
+;;
+let samplerate_index_of_id = function
+	| MPEG1 ->  [| S44100;S48000;S32000 |]
+	| MPEG2 ->  [| S22050;S24000;S16000 |]
+	| MPEG25 -> [| S11025;S12000; S8000 |]
 ;;
 
 type input_frame_t = {
 	if_raw : Ptr.Ref.ref_t;
 	if_header : header_t;
-(*	if_side_string : string;*)
 	if_side_raw : Ptr.Ref.ref_t;
-(*	if_data_string : string;*)
 	if_data_raw : Ptr.Ref.ref_t;
-(*	if_frame_string : string; (* Includes the entire frame (WITH header) *)*)
 	if_crc_ok : bool; (* Also true if the frame has no CRC *)
 	mutable if_xing : xingTag_t option; (* This is mutable so that read_next_frame can change it *)
 }
@@ -337,7 +354,7 @@ let data_offset_of_if f = match f.if_header.header_id with
 *)
 let data_offset_of_if f = match f.if_header.header_id with
 	| MPEG1 -> Ptr.Ref.get_bits f.if_side_raw 0 9
-	|   _   -> Ptr.Ref.get_bits f.if_side_raw 0 8
+	| MPEG2 | MPEG25 -> Ptr.Ref.get_bits f.if_side_raw 0 8
 ;;
 
 (* New for mp3read: this lets the reader function find out what is needed *)
@@ -439,7 +456,7 @@ let new_file_state () = {
 };;
 *)
 class file_state =
-	object(o)
+	object
 
 		(* Everything under this is protected by this mutex *)
 		val m = Mutex.create ()
@@ -591,7 +608,7 @@ let detected_processors = try
 				let proc = Unix.open_process_in "sysctl hw.logicalcpu" in
 				let s = input_line proc in
 				ignore (Unix.close_process_in proc);
-				Scanf.sscanf s "%s %d" (fun a b -> b)
+				Scanf.sscanf s "%s %d" (fun _ b -> b)
 			)
 			| _ -> (
 				(* Other *)
@@ -680,6 +697,7 @@ let padded_frame samplerate bitrate frameno =
 	| (S44100, 224) -> [| false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true |].(f)
 	| (S44100, 256) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
 	| (S44100, 320) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
+	| (S44100,  _ ) -> invalid_arg "padded_frame invalid bitrate"
 
 	| (S22050,   8) -> [| false;false;false;false;false;false;false;false;true ;false;false;false;false;false;false;false;true ;false;false;false;false;false;false;false;true ;false;false;false;false;false;false;false;true ;false;false;false;false;false;false;false;true ;false;false;false;false;false;false;false;true |].(f)
 	| (S22050,  16) -> [| false;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true |].(f)
@@ -695,6 +713,7 @@ let padded_frame samplerate bitrate frameno =
 	| (S22050, 128) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
 	| (S22050, 144) -> [| false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;true |].(f)
 	| (S22050, 160) -> [| false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true |].(f)
+	| (S22050,  _ ) -> invalid_arg "padded_frame invalid bitrate"
 
 	| (S11025,   8) -> [| false;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true |].(f)
 	| (S11025,  16) -> [| false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true |].(f)
@@ -710,10 +729,144 @@ let padded_frame samplerate bitrate frameno =
 	| (S11025, 128) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
 	| (S11025, 144) -> [| false;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;true |].(f)
 	| (S11025, 160) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
+	| (S11025,  _ ) -> invalid_arg "padded_frame invalid bitrate"
 
-	| _ -> false (* All other samplerates, as well as any invalid bitrates *)
+	| (S48000,_) | (S32000,_) | (S24000,_) | (S16000,_) | (S12000,_) | (S8000,_) -> false (* All other samplerates *)
 ;;
 
 
 
+(**
+module Types2 =
+	struct
+
+
+	type mpeg1_t;;
+	type mpeg20_t;;
+	type mpeg25_t;;
+	type _ mpeg2_t =
+		| MPEG20 : mpeg20_t mpeg2_t
+		| MPEG25 : mpeg25_t mpeg2_t
+	;;
+	type _ mpeg_t =
+		| MPEG1 : mpeg1_t mpeg_t
+		| MPEG2 : 'a mpeg2_t -> 'a mpeg2_t mpeg_t
+	;;
+
+	type _ samplerate_t =
+		| S48000 : mpeg1_t samplerate_t
+		| S44100 : mpeg1_t samplerate_t
+		| S32000 : mpeg1_t samplerate_t
+		| S24000 : mpeg20_t mpeg2_t samplerate_t
+		| S22050 : mpeg20_t mpeg2_t samplerate_t
+		| S16000 : mpeg20_t mpeg2_t samplerate_t
+		| S12000 : mpeg25_t mpeg2_t samplerate_t
+		| S11025 : mpeg25_t mpeg2_t samplerate_t
+		| S8000  : mpeg25_t mpeg2_t samplerate_t
+	;;
+
+	let id_of_index = function
+		| 0 -> Reg_MPEG25
+		| 3 -> Reg_MPEG1
+	;;
+
+	let samplerate_of_id : type a. a mpeg_t -> a samplerate_t array = function
+		| MPEG1 -> [| S48000 |]
+		| MPEG2 MPEG20 -> [| S24000 |]
+		| MPEG2 MPEG25 -> [| S12000 |]
+	;;
+
+
+	type channel_mono_t;;
+
+	type channel_js_t = {js_ms : bool; js_is : bool};;
+	type channel_stereo_t = Stereo_simple | Stereo_joint of channel_js_t | Stereo_dual;;
+
+	type _ channel_t =
+		| Channel_mono : channel_mono_t channel_t
+		| Channel_stereo : channel_stereo_t -> channel_stereo_t channel_t
+	;;
+
+	type bitrate_t = {
+		bitrate_data : int;
+		bitrate_size : int;
+		bitrate_num : int;
+		bitrate_padding : bool;
+		bitrate_index : int;
+	};;
+
+	type emphasis_t = Emphasis_none | Emphasis_5015 | Emphasis_CCITT;;
+
+	type ('id,'chan) header_t = {
+	(*	header_int : int;*)
+		header_id : 'id mpeg_t;
+		header_crc : bool;
+		header_bitrate : bitrate_t;
+		header_samplerate : 'id samplerate_t;
+		header_padding : bool;
+		header_private : bool;
+		header_channel_mode : 'chan channel_t;
+		header_copyright : bool;
+		header_original : bool;
+		header_emphasis : emphasis_t;
+	};;
+
+
+	type (_,_) side_bits_t =
+		| Gran_1_mono : (int * int) -> (mpeg1_t, channel_mono_t) side_bits_t
+		| Gran_1_stereo : (int * int * int * int) -> (mpeg1_t, channel_stereo_t) side_bits_t
+		| Gran_2_mono : int -> (_ mpeg2_t, channel_mono_t) side_bits_t
+		| Gran_2_stereo : (int * int) -> (_ mpeg2_t, channel_stereo_t) side_bits_t
+	;;
+
+	type ('id,'chan) side_t = {
+		side_raw : Ptr.Ref.ref_t;
+		side_offset : int;
+		side_bits : ('id,'chan) side_bits_t;
+		side_bytes : int;
+	};;
+
+	type ('id,'chan) input_frame_t = {
+		if_raw : Ptr.Ref.ref_t;
+		if_header : ('id,'chan) header_t;
+		if_side_raw : Ptr.Ref.ref_t;
+		if_data_raw : Ptr.Ref.ref_t;
+		if_crc_ok : bool;
+		mutable if_xing : xingTag_t option;
+	};;
+
+	type ('id,'chan) f1_t = {
+		f1_num : int;
+		f1_header : ('id,'chan) header_t;
+		f1_side : ('id,'chan) side_t;
+		mutable f1_data : Ptr.Ref.ref_t;
+		mutable f1_pad_exact : int option; (* I really don't know what this does *)
+	};;
+
+	type ('id,'chan) f2_t = {
+		f2_num : int;
+		f2_header : ('id,'chan) header_t;
+		f2_side : ('id,'chan) side_bits_t;
+		f2_bitrate : bitrate_t;
+		f2_data : Ptr.Ref.ref_t;
+		f2_pad : int;
+		mutable f2_offest : int;
+		mutable f2_bytes_left : int;
+		mutable f2_flag : bool;
+		mutable f2_check_output : bool; (* if the frame may have a gap before it (or before any previous frame, if needed) *)
+	};;
+
+	type f3_t = {
+		f3_num : int;
+		f3_header_side_raw : Ptr.Ref.ref_t;
+		mutable f3_output_data : Ptr.Ref.ref_t;
+		f3_bitrate : bitrate_t;
+		mutable f3_flag : bool; (* WHAT ON EARTH ARE THESE FLAGS? *)
+	};;
+
+
+
+	end
+;;
+**)
 
