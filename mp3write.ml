@@ -61,3 +61,52 @@ class mp3write_unix ?(flags=[Unix.O_EXCL]) out_file =
 	end
 ;;
 
+
+
+
+class mp3write_unix_ptrref ?(flags=[Unix.O_EXCL]) out_file =
+	object(o)
+		val handle = Unicode.openfile_utf8 out_file (Unix.O_WRONLY :: Unix.O_CREAT :: flags) 0o660
+		method output s r l = Ptr.Ref.really_write handle s r l
+		method output_this s = Ptr.Ref.really_write_ref handle s
+		method seek i = ignore (Unix.lseek handle i Unix.SEEK_SET)
+		method pos = Unix.lseek handle 0 Unix.SEEK_CUR
+		method close = Unix.close handle
+	end
+;;
+
+
+class mp3write_unix_ptrref_buf ?(flags=[Unix.O_EXCL]) ?(buf_bytes=4096) out_file =
+	object(o)
+		val handle = Unicode.openfile_utf8 out_file (Unix.O_WRONLY :: Unix.O_CREAT :: flags) 0o660
+		val buf = Ptr.make buf_bytes 0
+		val mutable pos_in_buf = 0;
+		method write_buf = if pos_in_buf <> 0 then (
+			Ptr.really_write handle buf 0 pos_in_buf;
+			pos_in_buf <- 0;
+		)
+		method output s r l = (
+			let bytes_left = buf_bytes - pos_in_buf in
+			let write_bytes = min bytes_left l in
+			Ptr.Ref.blit_to_ptr s r buf pos_in_buf write_bytes;
+			pos_in_buf <- pos_in_buf + write_bytes;
+			if pos_in_buf = buf_bytes then o#write_buf;
+			if write_bytes <> l then o#output s (r + write_bytes) (l - write_bytes)
+		)
+		method output_this s = o#output s 0 (Ptr.Ref.length s)
+		method seek i = (
+			o#write_buf;
+			ignore (Unix.lseek handle i Unix.SEEK_SET);
+		)
+		method pos = (
+			let h_pos = Unix.lseek handle 0 Unix.SEEK_CUR in
+			h_pos + pos_in_buf
+		)
+		method close = (
+			o#write_buf;
+			Unix.close handle
+		)
+	end
+;;
+
+

@@ -158,7 +158,7 @@ let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name 
 				p " %f seconds" sec;
 			
 				let kilobitPerSecondByte = 1.0 /. (bspfk *. float_of_int (!frame_inky_ref + 1)) in
-				let total_mp3_data = (!total_data_bytes_ref + (!frame_inky_ref + 1) * (4 + String.length first_real_frame.if_side_raw)) in
+				let total_mp3_data = (!total_data_bytes_ref + (!frame_inky_ref + 1) * (4 + Ptr.Ref.length first_real_frame.if_side_raw)) in
 			
 				p " %d bytes in file (%f kbps)" in_obj#length (float_of_int in_obj#length *. kilobitPerSecondByte);
 				p " %d bytes in MP3 frames (%f kbps) = current bitrate" !total_frame_size_ref (float_of_int !total_frame_size_ref *. kilobitPerSecondByte);
@@ -207,11 +207,11 @@ let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name 
 						bitrate_num = real_bitrate;
 						bitrate_padding = padded;
 						bitrate_size = unpad_length + pad_add;
-						bitrate_data = unpad_length + pad_add - 4 - String.length first_real_frame.if_side_raw;
+						bitrate_data = unpad_length + pad_add - 4 - Ptr.Ref.length first_real_frame.if_side_raw;
 						bitrate_index = index
 					}
 				), (fun bytes ->
-					let bph = bytes + 4 + String.length first_real_frame.if_side_raw in (* bytes plus header *)
+					let bph = bytes + 4 + Ptr.Ref.length first_real_frame.if_side_raw in (* bytes plus header *)
 					let out = ref None in
 					List.iter (fun (index, real_bitrate) ->
 						match !out with
@@ -224,7 +224,7 @@ let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name 
 									bitrate_num = real_bitrate;
 									bitrate_padding = false;
 									bitrate_size = bytes_unpadded;
-									bitrate_data = bytes_unpadded - 4 - String.length first_real_frame.if_side_raw;
+									bitrate_data = bytes_unpadded - 4 - Ptr.Ref.length first_real_frame.if_side_raw;
 									bitrate_index = index
 								}
 							) else if bytes_unpadded + 1 >= bph then (
@@ -233,7 +233,7 @@ let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name 
 									bitrate_num = real_bitrate;
 									bitrate_padding = true;
 									bitrate_size = bytes_unpadded + 1;
-									bitrate_data = bytes_unpadded + 1 - 4 - String.length first_real_frame.if_side_raw;
+									bitrate_data = bytes_unpadded + 1 - 4 - Ptr.Ref.length first_real_frame.if_side_raw;
 									bitrate_index = index
 								}
 							) (* else keep going *)
@@ -252,7 +252,7 @@ let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name 
 			let check_bitrate br_index = (
 				let br_num = (bitrate_index_of_id first_real_frame.if_header.header_id).(br_index) in
 				let res_ref = ref 0 in
-				let br_unpadded_bytes = unpadded_frame_length first_real_frame.if_header.header_samplerate br_num - 4 - String.length first_real_frame.if_side_raw in
+				let br_unpadded_bytes = unpadded_frame_length first_real_frame.if_header.header_samplerate br_num - 4 - Ptr.Ref.length first_real_frame.if_side_raw in
 				let br_padded_bytes = br_unpadded_bytes + 1 in
 				if debug_info then p "  %d (%d) %d" br_index br_num br_unpadded_bytes;
 				let find_padded_frame = padded_frame first_real_frame.if_header.header_samplerate br_num in
@@ -296,6 +296,8 @@ let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name 
 (*			Printf.printf "TIME: %f\n" (Sys.time () -. t1);*)
 
 			in_obj#close;
+
+			flush stdout;
 
 			(0,!sync_errors_ref,0)
 		)

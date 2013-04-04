@@ -18,356 +18,402 @@
 
 open Mp3types;;
 
+(* Just accept pretty much anything *)
+let frame_reqs = {
+	req_id           = Req_any;
+	req_crc          = Req_any;
+	req_bitrate      = Req_any;
+	req_samplerate   = Req_any;
+	req_padding      = Req_any;
+	req_private      = Req_any;
+	req_channel_mode = Req_any;
+	req_ms           = Req_any;
+	req_is           = Req_any;
+	req_copyright    = Req_any;
+	req_original     = Req_any;
+	req_emphasis     = Req_any;
+};;
 
 
-let rec unix_really_write d s o l =
-	if l = 0 then () else (
-		let put = Unix.write d s o l in
-		if put = 0 then raise End_of_file else unix_really_write d s (o + put) (l - put)
-	)
-;;
-let rec unix_really_read d s o l =
-	if l = 0 then () else (
-		let got = Unix.read d s o l in
-		if got = 0 then raise End_of_file else unix_really_read d s (o + got) (l - got)
-	)
-;;
+let unused_error_codes =    0x3FFFFFFE;;
+let error_code_recompress = 0x00000001;;
 
+let max_reasonable_len = 4000;;
 
-(* For marshalling to/from Unixy file descriptors *)
-let marshal_to_descr descr x flag_list =
-	let str = Marshal.to_string x flag_list in
-	unix_really_write descr str 0 (String.length str)
-;;
+(* This is run by each of the worker processes *)
 
+(*
+There are 3 possibilities for the input frames:
+	A new frame (should have both frame number and length)
+	An EOF marker (should have only frame number)
+	An exit request (should not really have anything)
+*)
+(*
+If the frame number is -1 then it's an exit request.
+If the frame number is positive then it's something else:
+	If the length is 0 then it's an EOF marker
+	If the length is > 4+9 then it's a frame
+*)
 
-let marshal_from_descr descr =
-	let head_str = String.create Marshal.header_size in
-	unix_really_read descr head_str 0 Marshal.header_size;
-	let data_size = Marshal.data_size head_str 0 in
-	let temp_str = String.create (Marshal.header_size + data_size) in
-	String.blit head_str 0 temp_str 0 Marshal.header_size;
-	unix_really_read descr temp_str Marshal.header_size data_size;
-	Marshal.from_string temp_str 0
-;;
-
-
-
-
-
-
-
-
-
-
-
-
-
-(* Ensures that the files can be processed without running into file-related problems *)
-(* Returns Some (from_file, to_file) if processing can continue, or None if it can't *)
-(* This should not be used with only_info *)
-let prepare_file rename_input force_overwrite fin1 fout1 =
-	let fin = strip_multiple_slashes fin1 in
-	let fout = strip_multiple_slashes fout1 in
-	if rename_input then (
-		(* Delete fout, move fin to fout, then do fout -> fin *)
-		match (find_file fin, find_file fout, force_overwrite) with
-		| (None, _, _) -> (Printf.printf " WARNING: file '%s' does not exist; ignoring\n" fin; None)
-		| (Some Unix.S_REG, None, _) -> (
-			match trap_exception_2 Sys.rename fin fout with
-			| Normal () -> Some (fout, fin)
-			| Error e -> (
-				Printf.printf " WARNING: Got error '%s' renaming '%s' to '%s'; ignoring\n" (Printexc.to_string e) fin fout;
-				None
-			)
-		)
-		| (Some Unix.S_REG, Some Unix.S_REG, false) -> (
-			Printf.printf "Do you really want to overwrite '%s'? (y/n)\n" fout;
-			let answer = read_line () in
-			if String.length answer > 0 && (answer.[0] = 'y' || answer.[0] = 'Y') then (
-				match trap_exception Sys.remove fout with
-				| Normal () -> (
-					match trap_exception_2 Sys.rename fin fout with
-					| Normal () -> Some (fout, fin)
-					| Error e -> (
-						Printf.printf " WARNING: Got error '%s' renaming '%s' to '%s'; ignoring\n" (Printexc.to_string e) fin fout;
-						None
-					)
-				)
-				| Error e -> (
-					Printf.printf " WARNING: Got error '%s' deleting '%s'; ignoring\n" (Printexc.to_string e) fout;
-					None
-				)
+(* It accepts a 32-bit frame number, 32-bit length, then a that number of bytes as a frame (no CRC, 0 bit reservoir, no padding after frame data) *)
+(* The main process tells this one to stop by using a length of 0 *)
+(* This returns a 32-bit mask of the errors encountered, 32-bit frame number, a 32-bit length, then length bytes corresponding to only the frame side info and data *)
+(* NOTE: MUST use eprintf since stdout will be piped to the main program *)
+let worker worker_num process_set debug =
+	if debug then Printf.eprintf "WORKER STARTING!\n%!";
+	let temp_in_h = Unix.openfile (Printf.sprintf "worker_%d_in.bin" worker_num) [Unix.O_WRONLY;Unix.O_CREAT;Unix.O_TRUNC] 0o640 in
+	let keep_printing () =
+		let temp_ptr = Ptr.make 4 0 in
+		Ptr.put_32_of_int temp_ptr 0 0x21212121;
+		Ptr.really_write temp_in_h temp_ptr 0 4;
+		while true do
+			Ptr.really_read Unix.stdin temp_ptr 0 (Ptr.length temp_ptr);
+			Ptr.really_write temp_in_h temp_ptr 0 (Ptr.length temp_ptr);
+		done
+	in
+	try
+		let temp_ptr = Ptr.make 4 0 in
+		let rec loop () =
+(*			Thread.delay @@ Random.float 0.1;*)
+			Ptr.put_32_of_int temp_ptr 0 0x23232323;
+			Ptr.really_write temp_in_h temp_ptr 0 4;
+			Ptr.really_read Unix.stdin temp_ptr 0 4;
+			Ptr.really_write temp_in_h temp_ptr 0 4;
+			let frame_num = Ptr.get_int_of_32 temp_ptr 0 in
+			if frame_num = -1 then (
+				(* EXIT! *)
+				if debug then Printf.eprintf "Worker exiting\n%!";
+				Ptr.put_32_of_int temp_ptr 0 (-1);
+				Ptr.really_write Unix.stdout temp_ptr 0 4;
+				exit 0
+			) else if frame_num < 0 then (
+				(* ERROR! *)
+				if debug then Printf.eprintf "Worker %d got a badly-numbered frame (%d)\n%!" worker_num frame_num;
+				keep_printing ();
+				exit 1
 			) else (
-				None
-			)
-		)
-		| (Some Unix.S_REG, Some Unix.S_REG, true) -> (
-			Sys.remove fout;
-			Sys.rename fin fout;
-			Some (fout, fin)
-		)
-		| _ -> (Printf.printf "WARNING: Invalid mapping from '%s' to '%s'; ignoring\n" fin fout; None)
-	) else (
-		(* Normal fin -> fout *)
-		match (find_file fin, find_file fout, force_overwrite) with
-		| (None, _, _) -> (Printf.printf " WARNING: file '%s' does not exist; ignoring\n" fin; None)
-		| (Some Unix.S_REG, None, _) -> Some (fin, fout)
-		| (Some Unix.S_REG, Some Unix.S_REG, false) -> (
-			Printf.printf "Do you really want to overwrite '%s'? (y/n)\n" fout;
-			let answer = read_line () in
-			if String.length answer > 0 && (answer.[0] = 'y' || answer.[0] = 'Y') then (
-				Sys.remove fout;
-				Some (fin, fout)
-			) else (
-				None
-			)
-		)
-		| (Some Unix.S_REG, Some Unix.S_REG, true) -> (
-			Sys.remove fout;
-			Some (fin, fout)
-		)
-		| _ -> (Printf.printf "WARNING: Invalid mapping from '%s' to '%s'; ignoring\n" fin fout; None)
-	)
-;;
+(*				if debug then Printf.eprintf "Worker got frame number %X\n%!" frame_num;*)
+				Ptr.really_read Unix.stdin temp_ptr 0 4;
+				Ptr.really_write temp_in_h temp_ptr 0 4;
+				let len = Ptr.get_int_of_32 temp_ptr 0 in
+				if len = 0 then (
+					(* EOF; just send the EOF back *)
+					if debug then Printf.eprintf "Worker responding with EOF\n%!";
+					Ptr.put_32_of_int temp_ptr 0 frame_num;
+					Ptr.really_write Unix.stdout temp_ptr 0 4;
+					Ptr.put_32_of_int temp_ptr 0 0;
+					Ptr.really_write Unix.stdout temp_ptr 0 4;
+					loop ()
+				) else if len < 4 + 9 || len > max_reasonable_len then (
+					(* OOPS! *)
+					if debug then Printf.eprintf "Worker %d got an invalid length (%d)\n%!" worker_num len;
+					keep_printing ();
+					exit 2
+				) else (
+					let frame_ptr = Ptr.make max_reasonable_len 0 in (* The frame-reading function requires a full frame to work *)
+					Ptr.really_read Unix.stdin frame_ptr 0 len;
+					Ptr.really_write temp_in_h frame_ptr 0 len;
+					let header_ptrref = Ptr.Ref.of_subptr frame_ptr 0 4 in
 
-(* Runs "f" on any file pairs which are valid (input has an .mp3 extension and output does not exist) *)
-let prepare_dir rename_input force_overwrite din1 dout1 f =
-	let din = strip_multiple_slashes din1 in
-	let dout = strip_multiple_slashes dout1 in
-	let all_contents = Sys.readdir din in
-	Array.iter (fun fin_base ->
-		if Filename.check_suffix fin_base ".mp3" then (
-			(* Smells like an MP3 *)
-			let fin = Filename.concat din fin_base in
-			let fout = Filename.concat dout fin_base in
-			match prepare_file rename_input force_overwrite fin fout with
-			| None -> () (* Skip *)
-			| Some (file_from, file_to) -> f file_from file_to
-		) else (
-			Printf.printf "SKIPPING '%s'\n" (Filename.concat din fin_base);
-		)
-	) all_contents
-;;
-
-
-(* Remake prepare_(file|dir) since they don't have the ability to skip over files that need confirmation *)
-(* This function will run "f" on the files that can be processed now, or add them to do_so_far to be handled later *)
-let check_problem_file rename_input force_overwrite fin1 fout1 f do_so_far =
-	let fin = strip_multiple_slashes fin1 in
-	let fout = strip_multiple_slashes fout1 in
-	if rename_input then (
-		(* Delete fout, move fin to fout, then fout -> fin *)
-		match (find_file fin, find_file fout, force_overwrite) with
-		| (None, _, _) -> (
-			Printf.printf " WARNING: file '%s' does not exist; ignoring\n";
-			do_so_far
-		)
-		| (Some Unix.S_REG, None, _) -> (
-			match trap_exception_2 Sys.rename fin fout with
-			| Normal () -> (
-				f fout fin;
-				do_so_far
-			)
-			| Error e -> (
-				Printf.printf " WARNING: Got error '%s' renaming '%s' to '%s'; trying again later\n" (Printexc.to_string e) fin fout;
-				(fun () ->
-					match trap_exception_2 Sys.rename fin fout with
-					| Normal () -> f fout fin
-					| Error e -> Printf.printf " WARNING: Got error '%s' renaming '%s' to '%s' again\n" (Printexc.to_string e) fin fout;
-				) :: do_so_far
-			)
-		)
-		| (Some Unix.S_REG, Some Unix.S_REG, false) -> (
-			(* Tell the user about it later *)
-			(fun () ->
-				Printf.printf "Do you really want to overwrite '%s'? (y/n)\n" fout;
-				let answer = read_line () in
-				if String.length answer > 0 && (answer.[0] = 'y' || answer.[0] = 'Y') then (
-					match trap_exception Sys.remove fout with
-					| Normal () -> (
-						match trap_exception_2 Sys.rename fin fout with
-						| Normal () -> f fout fin
-						| Error e -> Printf.printf " WARNING: Got error '%s' renaming '%s' to '%s'; ignoring\n" (Printexc.to_string e) fin fout
+					match Mp3read.header_of_ptrref false header_ptrref with
+					| None -> (
+						if debug then Printf.eprintf "Worker %d got invalid frame header\n%!" worker_num;
+						keep_printing ();
+						exit 3
 					)
-					| Error e -> (
-						Printf.printf " WARNING: Got error '%s' deleting '%s'; ignoring\n" (Printexc.to_string e) fout
+					| Some header -> (
+						let side_len = match (header.header_id, header.header_channel_mode) with
+							| (MPEG1, ChannelMono) -> 17
+							| (  _  , ChannelMono) ->  9
+							| (MPEG1,      _     ) -> 32
+							| (  _  ,      _     ) -> 17
+						in
+						let side_ptrref = Ptr.Ref.of_subptr frame_ptr 4 side_len in
+						let frame_to_compress = {
+							f1_num = frame_num;
+							f1_header = header;
+							f1_side = Mp3read.side_info_of_header header side_ptrref;
+							f1_data = Ptr.Ref.of_subptr frame_ptr (4 + side_len) (len - 4 - side_len);
+							f1_pad_exact = None;
+						} in
+
+						let (q, recompress_error) = (try
+							Mp3frameutils.recompress_frame process_set frame_to_compress (ref false)
+						with
+							_ -> (frame_to_compress, true)
+						) in
+						let errors = (if recompress_error then error_code_recompress else 0) in
+
+						Ptr.put_32_of_int temp_ptr 0 frame_num;
+						Ptr.really_write Unix.stdout temp_ptr 0 4;
+						let out_len = Ptr.Ref.length q.f1_header.header_raw + Ptr.Ref.length q.f1_side.side_raw + Ptr.Ref.length q.f1_data in
+						Ptr.put_32_of_int temp_ptr 0 out_len;
+						Ptr.really_write Unix.stdout temp_ptr 0 4;
+						Ptr.put_32_of_int temp_ptr 0 errors;
+						Ptr.really_write Unix.stdout temp_ptr 0 4;
+
+						let write_me = Ptr.make out_len 0 in
+						Ptr.Ref.blit_to_ptr q.f1_header.header_raw 0 write_me 0 4;
+						Ptr.Ref.blit_to_ptr q.f1_side.side_raw 0 write_me 4 (Ptr.Ref.length q.f1_side.side_raw);
+						Ptr.Ref.blit_to_ptr q.f1_data 0 write_me (4 + Ptr.Ref.length q.f1_side.side_raw) (Ptr.Ref.length q.f1_data);
+						Ptr.really_write Unix.stdout write_me 0 out_len;
+(*
+						Ptr.Ref.really_write_ref Unix.stdout q.f1_header.header_raw;
+						Ptr.Ref.really_write_ref Unix.stdout q.f1_side.side_raw;
+						Ptr.Ref.really_write_ref Unix.stdout q.f1_data;
+*)
+						loop ()
 					)
 				)
-			) :: do_so_far
-		)
-		| (Some Unix.S_REG, Some Unix.S_REG, true) -> (
-			(* Don't bother telling the user about it later *)
-			(match trap_exception Sys.remove fout with
-				| Normal () -> (
-					match trap_exception_2 Sys.rename fin fout with
-					| Normal () -> f fout fin
-					| Error e -> Printf.printf " WARNING: Got error '%s' renaming '%s' to '%s'; ignoring\n" (Printexc.to_string e) fin fout
-				)
-				| Error e -> Printf.printf " WARNING: Got error '%s' deleting '%s'; ignoring\n" (Printexc.to_string e) fout
-			);
-			do_so_far
-		)
-		| _ -> (
-			Printf.printf " WARNING: Invalid mapping from '%s' to '%s; ignoring\n" fin fout;
-			do_so_far
-		)
-	) else (
-		(* Don't do the rename part *)
-		match (find_file fin, find_file fout, force_overwrite) with
-		| (None, _, _) -> (
-			Printf.printf " WARNING: file '%s' does not exist; ignoring\n";
-			do_so_far
-		)
-		| (Some Unix.S_REG, None, _) -> (
-			f fin fout;
-			do_so_far
-		)
-		| (Some Unix.S_REG, Some Unix.S_REG, false) -> (
-			(* Tell the user about it later *)
-			(fun () ->
-				Printf.printf "Do you really want to overwrite '%s'? (y/n)\n" fout;
-				let answer = read_line () in
-				if String.length answer > 0 && (answer.[0] = 'y' || answer.[0] = 'Y') then (
-					match trap_exception Sys.remove fout with
-					| Normal () -> f fin fout
-					| Error e -> Printf.printf " WARNING: Got error '%s' deleting '%s'; ignoring\n" (Printexc.to_string e) fout
-				)
-			) :: do_so_far
-		)
-		| (Some Unix.S_REG, Some Unix.S_REG, true) -> (
-			(* Try to delete now, and don't bother telling the user about it later *)
-			(match trap_exception Sys.remove fout with
-				| Normal () -> f fin fout
-				| Error e -> Printf.printf " WARNING: Got error '%s' deleting '%s'; ignoring\n" (Printexc.to_string e) fout
-			);
-			do_so_far
-		)
-		| _ -> (
-			Printf.printf " WARNING: Invalid mapping from '%s' to '%s; ignoring\n" fin fout;
-			do_so_far
-		)
-	)
-;;
-
-let list_problems rename_input force_overwrite din1 dout1 f =
-	let din = strip_multiple_slashes din1 in
-	let dout = strip_multiple_slashes dout1 in
-	let all_contents = Sys.readdir din in
-	let problem_list = Array.fold_left (fun do_so_far fin_base ->
-		if Filename.check_suffix fin_base ".mp3" then (
-			let fin = Filename.concat din fin_base in
-			let fout = Filename.concat dout fin_base in
-			check_problem_file rename_input force_overwrite fin fout f do_so_far
-		) else (
-			Printf.printf "SKIPPING '%s'\n" fin_base;
-			do_so_far
-		)
-	) [] all_contents in
-	List.iter (fun x -> x ()) problem_list;
-;;
-
-
-
-
-(* If another mp3packer is running this one, this is the loop *)
-(* It will wait for information from stdin, process it, then write it to stdout *)
-let rec worker_loop queue_state_opt =
-(*	Printf.eprintf "Starting worker\n%!";*)
-	match marshal_from_descr Unix.stdin with
-	| Worker_queue new_queue_state -> worker_loop (Some {new_queue_state with q_silent = true; q_debug_in = false; q_debug_queue = false; q_debug_recompress = false})
-	| Worker_do {worker_file_index = i; worker_file_input = fin; worker_file_output = fout} -> (
-		let worker_ret = match queue_state_opt with
-			| Some queue_state -> (try
-				let in_obj = new Mp3read.mp3read_unix fin in
-				let out_obj = new Mp3write.mp3write_unix ~flags:[Unix.O_EXCL] fout in
-				let worker_errors = Mp3queue.do_queue queue_state in_obj out_obj in
-				Worker_ok {
-					worker_ok_index = i(* ^ "\x1A\x0D\x1A\x0A\x1A" ^ fin*);
-					worker_output_result = worker_errors;
-				}
-			with
-				| Unix.Unix_error (Unix.EEXIST, "open", _) -> Worker_skipped i
-				| e -> Worker_fail {worker_fail_index = i; worker_exception = worker_exn_of_exn e}
 			)
-			| None -> Worker_fail {worker_fail_index = i; worker_exception = Worker_fail_not_found}
 		in
-		marshal_to_descr Unix.stdout worker_ret [Marshal.No_sharing];
-(*		flush stdout;*)
-		worker_loop queue_state_opt
-	)
-	| Worker_finish -> (
-		marshal_to_descr Unix.stdout Worker_done [Marshal.No_sharing];
-(*		flush stdout;*)
-		()
-	)
+		loop ()
+	with
+	| e -> (
+		if debug then Printf.eprintf "worker returned \"%s\"\n%!" (Printexc.to_string e);
+		exit 256
+	);
 ;;
 
 
-let rec controller_setup () =
-	let num_workers = Mp3types.detected_processors in
-(*	let run = Printf.sprintf "\"%s\" --worker" Sys.argv.(0) in*)
-(*
-	let channel_array = Array.init num_workers (fun _ ->
-		let channels = Unix.open_process run in
-		set_binary_mode_in (fst channels) true;
-		set_binary_mode_out (snd channels) true;
-		channels
-	) in
-*)
-	let channel_array = Array.init num_workers (fun _ ->
-		let (pipe_stdin_readme, pipe_stdin_writeme) = Unix.pipe () in
-		let (pipe_stdout_readme, pipe_stdout_writeme) = Unix.pipe () in
-(*		let (pipe_stderr_readme, pipe_stderr_writeme) = Unix.pipe () in*)
-		ignore @@ Unix.create_process Sys.argv.(0) [|Sys.argv.(0);"--worker"|] pipe_stdin_readme pipe_stdout_writeme Unix.stderr;
-		(pipe_stdout_readme, pipe_stdin_writeme)
-	) in
-	let still_running = Array.make num_workers true in
+let temp_out_h = Unix.openfile "pipe.bin" [Unix.O_WRONLY;Unix.O_CREAT;Unix.O_TRUNC] 0o640;;
 
-	let marshal_to_all (x : worker_do_t) = Array.iteri (fun i (_, write_channel) ->
-		if still_running.(i) then (
-(*			Marshal.to_channel write_channel x [Marshal.No_sharing];*)
-			marshal_to_descr write_channel x [Marshal.No_sharing];
-(*			flush write_channel*)
-		)
-	) channel_array in
+
+(* These functions are for the main program to send and receive stuff from the workers *)
+let (send_frame, send_eof, send_exit) =
+	let send f1 ?temp_h h =
+		let write_if_temp_h = match temp_h with
+			| None -> fun a b c -> ()
+			| Some h -> fun a b c -> Ptr.really_write h a b c
+		in
+		let write_ref_if_temp_h = match temp_h with
+			| None -> fun x -> ()
+			| Some h -> fun x -> Ptr.Ref.really_write_ref h x
+		in
+		let temp_ptr = Ptr.make 4 0 in
+		Ptr.put_32_of_int temp_ptr 0 0x23232323;
+		write_if_temp_h temp_ptr 0 4;
+		let total_bytes = Ptr.Ref.length f1.f1_header.header_raw + Ptr.Ref.length f1.f1_side.side_raw + Ptr.Ref.length f1.f1_data in
+		if Ptr.Ref.length f1.f1_header.header_raw <> 4 then failwith "Header wrong size";
+		Ptr.put_32_of_int temp_ptr 0 f1.f1_num;
+		write_if_temp_h temp_ptr 0 4;
+		Ptr.really_write h temp_ptr 0 4;
+		Ptr.put_32_of_int temp_ptr 0 total_bytes;
+		write_if_temp_h temp_ptr 0 4;
+		Ptr.really_write h temp_ptr 0 4;
+
+		let write_me = Ptr.make total_bytes 0 in
+		Ptr.Ref.blit_to_ptr f1.f1_header.header_raw 0 write_me 0 4;
+(*		Printf.printf "Header is %s\n" (Ptr.Ref.to_HEX f1.f1_header.header_raw);*)
+		Ptr.Ref.blit_to_ptr f1.f1_side.side_raw 0 write_me 4 (Ptr.Ref.length f1.f1_side.side_raw);
+		Ptr.Ref.blit_to_ptr f1.f1_data 0 write_me (4 + Ptr.Ref.length f1.f1_side.side_raw) (Ptr.Ref.length f1.f1_data);
+(*		Printf.printf "Writing %s\n" (Ptr.to_HEX write_me);*)
+
+(*		Ptr.really_write h write_me 0 total_bytes;*)
+(*		write_if_temp_h write_me 0 total_bytes;*)
 (*
-	let get_all () =
-		let out_array = Array.make num_workers Worker_done in
-		Array.iteri (fun i channels ->
-			if still_running.(i) then (
-(*				out_array.(i) <- Marshal.from_channel (fst channels)*)
-				out_array
-			)
-		) channel_array;
-		out_array
+		for i = 0 to total_bytes - 1 do
+			write_if_temp_h write_me i 1;
+			Ptr.really_write h write_me i 1;
+		done;
+*)
+
+		Printf.printf "Writing %016X\n" (Obj.magic f1.f1_header.header_raw);
+		write_ref_if_temp_h f1.f1_header.header_raw;
+		write_ref_if_temp_h f1.f1_side.side_raw;
+		write_ref_if_temp_h f1.f1_data;
+		Ptr.Ref.really_write_ref h f1.f1_header.header_raw;
+		Ptr.Ref.really_write_ref h f1.f1_side.side_raw;
+		Ptr.Ref.really_write_ref h f1.f1_data;
+
 	in
-*)
+	let eof tot h =
+		let temp_ptr = Ptr.make 4 0 in
+		Ptr.put_32_of_int temp_ptr 0 tot;
+		Ptr.really_write h temp_ptr 0 4;
+		Ptr.put_32_of_int temp_ptr 0 0;
+		Ptr.really_write h temp_ptr 0 4;
+	in
+	let final h =
+		let temp_ptr = Ptr.make 4 0 in
+		Ptr.put_32_of_int temp_ptr 0 (-1);
+		Ptr.really_write h temp_ptr 0 4;
+	in
+	(send, eof, final)
+;;
 
-	let get_something wait_time () =
-		let wait_list_ref = ref [] in
-		Array.iteri (fun i (x,_) -> if still_running.(i) then wait_list_ref := x :: !wait_list_ref) channel_array;
-		if !wait_list_ref = [] then (
-			(* Nobody is running *)
-			None
+
+type recv_t =
+	| Recv_exit
+	| Recv_EOF of int
+	| Recv_frame of f1_t * bool(* recompress error *)
+;;
+
+let recv_frame =
+	let temp_ptr = Ptr.make 4 0 in
+	fun h -> (
+(*		Gc.compact ();*)
+		Ptr.put_32_of_int temp_ptr 0 0x23232323;
+		Ptr.really_write temp_out_h temp_ptr 0 4;
+		Ptr.really_read h temp_ptr 0 4;
+		Ptr.really_write temp_out_h temp_ptr 0 4;
+		let frame_num = Ptr.get_int_of_32 temp_ptr 0 in
+		if frame_num = -1 then (
+			Recv_exit
+		) else if frame_num < 0 then (
+			(* ERROR! *)
+(*			failwith (Printf.sprintf "invalid frame received from worker %s" (Ptr.to_HEX temp_ptr));*)
+			exit 22;
 		) else (
-			match Unix.select !wait_list_ref [] [] wait_time with
-			| (hd :: tl, _, _) -> (
-				match marshal_from_descr hd with
-				| Worker_done -> (
-					(* Great. Now we just need to know which handle is done *)
-					Array.mapi (fun i (x,_) -> if hd = x then still_running.(i) <- false) channel_array;
-					Some Worker_done
-				)
-				| x -> Some x
-			)
-			| ([], _, _) -> None
-		)
-	in
+			Ptr.really_read h temp_ptr 0 4;
+			Ptr.really_write temp_out_h temp_ptr 0 4;
+			let frame_len = Ptr.get_int_of_32 temp_ptr 0 in
+			if frame_len = 0 then (
+				Recv_EOF frame_num
+			) else if frame_len < 4 + 9 || frame_len > max_reasonable_len then (
+(*				failwith (Printf.sprintf "invalid frame length received from worker %s" (Ptr.to_HEX temp_ptr));*)
+				exit 33;
+			) else (
+				Ptr.really_read h temp_ptr 0 4;
+				Ptr.really_write temp_out_h temp_ptr 0 4;
+				let error_mask = Ptr.get_int_of_32 temp_ptr 0 in
+				let recompress_error = (error_mask land error_code_recompress <> 0) in
+				let invalid_error_code = (error_mask land unused_error_codes <> 0) in
 
-(*	let close_all () = Array.map (fun channels -> Unix.close_process channels) channel_array in*)
-	let close_all () = Array.iter (fun (a,b) -> Unix.close a; Unix.close b) channel_array in
-	(marshal_to_all, get_something ~-.1.0, get_something 0.0, close_all)
+				if invalid_error_code then (
+(*					failwith (Printf.sprintf "invalid error code received from worker %s" (Ptr.to_HEX temp_ptr));*)
+					exit 44;
+				) else (
+					let frame_ptr = Ptr.make frame_len 0 in
+					Ptr.really_read h frame_ptr 0 frame_len;
+					Ptr.really_write temp_out_h frame_ptr 0 frame_len;
+					let header_ptrref = Ptr.Ref.of_subptr frame_ptr 0 4 in
+
+					match Mp3read.header_of_ptrref false header_ptrref with
+					| None -> (*failwith "invalid frame header received from worker"*)exit 55
+					| Some header -> (
+						let side_len = match (header.header_id, header.header_channel_mode) with
+							| (MPEG1, ChannelMono) -> 17
+							| (  _  , ChannelMono) ->  9
+							| (MPEG1,      _     ) -> 32
+							| (  _  ,      _     ) -> 17
+						in
+						let side_ptrref = Ptr.Ref.of_subptr frame_ptr 4 side_len in
+						let got_frame = {
+							f1_num = frame_num;
+							f1_header = header;
+							f1_side = Mp3read.side_info_of_header header side_ptrref;
+							f1_data = Ptr.Ref.of_subptr frame_ptr (4 + side_len) (frame_len - 4 - side_len);
+							f1_pad_exact = None;
+						} in
+						Recv_frame (got_frame, recompress_error)
+					)
+				)
+			)
+		)
+	)
 ;;
+
+
+class processes num_procs debug =
+	object(o)
+
+		val procs = Array.init num_procs (fun i ->
+			let (stdin_read,  stdin_write)  = Unix.pipe () in
+			let (stdout_read, stdout_write) = Unix.pipe () in
+			let proc_id = Unix.create_process argv.(0) [|Sys.argv.(0); "--worker"; string_of_int i; "--nice"; "0"|] stdin_read stdout_write Unix.stderr in
+			(proc_id, stdin_write, stdout_read)
+		)
+
+		val temp_h = Array.init num_procs (fun i -> Unix.openfile (Printf.sprintf "worker_%d_from_main.bin" i) [Unix.O_WRONLY;Unix.O_CREAT;Unix.O_TRUNC] 0o640)
+
+		val write_worker_ref = ref 0
+		val read_worker_ref = ref 0
+
+		method next_worker r = (
+			let old = !r in
+			r := (succ old) mod num_procs;
+			old
+		)
+		method next_write_worker = o#next_worker write_worker_ref
+		method next_read_worker = o#next_worker read_worker_ref
+
+		method scatter_frame f = (
+			let worker_num = o#next_write_worker in
+			let (worker_pid, worker_stdin, worker_stdout) = procs.(worker_num) in
+			send_frame f ~temp_h:(temp_h.(worker_num)) worker_stdin;
+		)
+		method scatter_eof num_frames = (
+			let worker_num = o#next_write_worker in
+			let (worker_pid, worker_stdin, worker_stdout) = procs.(worker_num) in
+			send_eof num_frames worker_stdin;
+		)
+		method scatter_exit = (
+			Array.iter (fun (worker_pid, worker_stdin, worker_stdout) ->
+				send_exit worker_stdin
+			) procs;
+			Array.iter Unix.close temp_h;
+		)
+
+		method gather = (
+			let worker_num = o#next_read_worker in
+			let (worker_pid, worker_stdin, worker_stdout) = procs.(worker_num) in
+			recv_frame worker_stdout
+		)
+
+	end
+;;
+
+(*
+type frame_queue_t =
+	| Queued_frame of (int * int) (* (frame_num, worker_num) *)
+	| Queue_file_end of int (* num_frames *)
+;;
+let start_procs num_procs debug =
+	let ret = Array.init num_procs (fun i ->
+		let (stdin_read,  stdin_write)  = Unix.pipe () in
+		let (stdout_read, stdout_write) = Unix.pipe () in
+		let proc_id = Unix.create_process argv.(0) [|Sys.argv.(0); "--worker"|] stdin_read stdout_write Unix.stderr in
+		(proc_id, stdin_write, stdout_read)
+	) in
+
+	(* Have to kill off the workers when the user quits *)
+	let close_workers () = Array.iter (fun (_,a,b) -> Unix.close a; Unix.close b) ret in
+	Sys.set_signal Sys.sigint (Sys.Signal_handle (fun _ ->
+		close_workers ();
+		exit Sys.sigint (* I guess... *)
+	));
+
+	let q_mutex = Mutex.create () in
+	let q = Queue.create () in
+
+	let next_frame_num_ref = ref 0 in
+
+	(* Now make functions which distribute the frames to the workers *)
+	let scatter_frame f =
+		let worker_num = (*Random.int num_procs*)f.f1_num mod num_procs in
+		let (worker_pid, worker_stdin, worker_stdout) = ret.(worker_num) in
+		next_frame_num_ref := (succ f.f1_num);
+
+		send_frame f worker_stdin;
+		Mutex.lock q_mutex;
+		Queue.add (Queued_frame (f.f1_num, worker_num)) q;
+		Mutex.unlock q_mutex;
+	in
+	let scatter_file_end () =
+		let num_frames = !next_frame_num_ref in
+		Mutex.lock q_mutex;
+		Queue.add (Queue_file_end num_frames) q;
+		Mutex.unlock q_mutex;
+		next_frame_num_ref := 0;
+	in
+	let scatter_close () = close_workers () in
+
+	let gather_frame () =
+		Mutex.lock q_mutex;
+		Queue.take
+		Mutex.unlock q_mutex;
+*)
+
 
 

@@ -37,73 +37,97 @@ let printf f =
 
 
 let make_xing xing header_and_side_info =
-	let out_ref = ref (xing.xingTagType ^ "\x00\x00\x00\x00") in
+	let first_out = Ptr.make 8 0 in
+	Ptr.blit_from_string xing.xingTagType 0 first_out 0 4;
+	let first_out_str = xing.xingTagType ^ "\x00\x00\x00\x00" in
 	(* frames, bytes, toc, quality *)
-	(match xing.xingNumFrames with
-		| None -> ()
-		| Some x -> (out_ref := !out_ref ^ (packN x); !out_ref.[7] <- Char.chr ((Char.code !out_ref.[7]) lor 0x01))
-	);
-	(match xing.xingNumBytes with
-		| None -> ()
-		| Some x -> (out_ref := !out_ref ^ (packN x); !out_ref.[7] <- Char.chr ((Char.code !out_ref.[7]) lor 0x02))
-	);
-	(match xing.xingTOC with
-		| None -> ()
+	let (ptrref_after_xingNumFrames, num_frames_flag) = (match xing.xingNumFrames with
+		| None -> (Ptr.Ref.null, 0x00)
 		| Some x -> (
-			let toc_string = String.create (Array.length x) in
-			Array.iteri (fun i c ->
-				toc_string.[i] <- Char.chr (c land 0xFF)
-			) x;
-			out_ref := !out_ref ^ toc_string;
-			!out_ref.[7] <- Char.chr ((Char.code !out_ref.[7]) lor 0x04)
+			let p = Ptr.make 4 0 in
+			Ptr.put_32_of_int_bswap p 0 x;
+			(Ptr.Ref.append Ptr.Ref.null (Ptr.Ref.of_ptr p), 0x01)
 		)
-	);
-	(match xing.xingQuality with
-		| None -> ()
-		| Some x -> (out_ref := !out_ref ^ (packN x); !out_ref.[7] <- Char.chr ((Char.code !out_ref.[7]) lor 0x08))
-	);
-	(match xing.xingLame with
+	) in
+	let (ptrref_after_xingNumBytes, num_bytes_flag) = (match xing.xingNumBytes with
+		| None -> (ptrref_after_xingNumFrames, 0x00)
+		| Some x -> (
+			let p = Ptr.make 4 0 in
+			Ptr.put_32_of_int_bswap p 0 x;
+			(Ptr.Ref.append ptrref_after_xingNumFrames (Ptr.Ref.of_ptr p), 0x02)
+		)
+	) in
+	let (ptrref_after_xingTOC, toc_flag) = (match xing.xingTOC with
+		| None -> (ptrref_after_xingNumBytes, 0x00)
+		| Some x -> (
+			let toc_ptr = Ptr.make (Array.length x) 0 in
+			Array.iteri (fun i c -> Ptr.put_8_of_int toc_ptr i c) x;
+			(Ptr.Ref.append ptrref_after_xingNumBytes (Ptr.Ref.of_ptr toc_ptr), 0x04)
+		)
+	) in
+	let (ptrref_after_xingQuality, quality_flag) = (match xing.xingQuality with
+		| None -> (ptrref_after_xingTOC, 0x00)
+		| Some x -> (
+			let p = Ptr.make 4 0 in
+			Ptr.put_32_of_int_bswap p 0 x;
+			(Ptr.Ref.append ptrref_after_xingTOC (Ptr.Ref.of_ptr p), 0x08)
+		)
+	) in
+
+(*	Ptr.put_8_of_int first_out 7 (num_frames_flag lor num_bytes_flag lor toc_flag lor quality_flag);*)
+	Ptr.put_32_of_int_bswap first_out 4 (num_frames_flag lor num_bytes_flag lor toc_flag lor quality_flag);
+(*	first_out_str.[7] <- Char.chr (num_frames_flag lor num_bytes_flag lor toc_flag lor quality_flag);*)
+	let ptrref_after_xing = Ptr.Ref.append (Ptr.Ref.of_ptr first_out) ptrref_after_xingQuality in
+	let after_lame = (
+		match xing.xingLame with
 		| None -> (
-			let encoder = String.sub (xing.xingEncoder ^ (String.make 20 '\x00')) 0 20 in
-			out_ref := !out_ref ^ encoder;
+			let encoder = Ptr.clearret (Ptr.make 20 0) in
+			Ptr.blit_from_string xing.xingEncoder 0 encoder 0 (min (Ptr.length encoder) (String.length xing.xingEncoder));
+(*			let encoder_string = String.sub (xing.xingEncoder ^ (String.make 20 '\x00')) 0 20 in*)
+			Ptr.Ref.append ptrref_after_xing (Ptr.Ref.of_ptr encoder);
 		)
 		| Some l -> (
-			let encoder = String.sub (xing.xingEncoder ^ (String.make 20 '\x00')) 0 9 in
-			out_ref := !out_ref ^ encoder;
-			let lame = String.make 25 '#' in
-			packBits lame   0  4 l.lameRevision;
-			packBits lame   4  4 l.lameVBRMethod;
-			packBits lame   8  8 l.lameLowpass;
-			let str32 = packN32 (Int32.bits_of_float l.lamePeakAmplitude) in
-			String.blit str32 0 lame 2 4; (*printf "%S\n" (to_hex str32);*)
-			packBits lame  48 16 l.lameRGTrack;
-			packBits lame  64 16 l.lameRGAlbum;
-			packBits lame  80  1 (if l.lameNoGapPrev   then 1 else 0);
-			packBits lame  81  1 (if l.lameNoGapNext   then 1 else 0);
-			packBits lame  82  1 (if l.lameNSSafeJoint then 1 else 0);
-			packBits lame  83  1 (if l.lameNSPsyTune   then 1 else 0);
-			packBits lame  84  4 l.lameATHType;
-			packBits lame  88  8 l.lameABRBitrate;
-			packBits lame  96 12 l.lameDelayStart;
-			packBits lame 108 12 l.lameDelayEnd;
-			packBits lame 120  2 l.lameSourceFrequency;
-			packBits lame 122  1 (if l.lameUnwise then 1 else 0);
-			packBits lame 123  3 l.lameStereoMode;
-			packBits lame 126  2 l.lameNoiseShaping;
-			packBits lame 128  8 l.lameMP3Gain;
-			packBits lame 136  2 0; (* Unused *)
-			packBits lame 138  3 l.lameSurround;
-			packBits lame 141 11 l.lamePreset;
-			packBits lame 152  2 0; (* Only 30 bits used *)
-			packBits lame 154 30 l.lameMusicLength;
-			packBits lame 184 16 l.lameMusicCRC;
-			out_ref := !out_ref ^ lame;
-(*			printf "%S\n" (to_hex (header_and_side_info ^ !out_ref));*)
-			let crc = Crc.create (header_and_side_info ^ !out_ref) 0 in
-			out_ref := !out_ref ^ (packn crc);
+			let encoder = Ptr.clearret (Ptr.make 9 0) in
+			Ptr.blit_from_string xing.xingEncoder 0 encoder 0 (min (Ptr.length encoder) (String.length xing.xingEncoder));
+			let ptrref_after_encoder = Ptr.Ref.append ptrref_after_xing (Ptr.Ref.of_ptr encoder) in
+
+			let lame = Ptr.make 25 0 in
+			let p = Ptr.put_bits lame in
+			p   0  4 l.lameRevision;
+			p   4  4 l.lameVBRMethod;
+			p   8  8 l.lameLowpass;
+			Ptr.put_32_of_float_bswap lame 2 l.lamePeakAmplitude;
+			p  48 16 l.lameRGTrack;
+			p  64 16 l.lameRGAlbum;
+			p  80  1 (if l.lameNoGapPrev   then 1 else 0);
+			p  81  1 (if l.lameNoGapNext   then 1 else 0);
+			p  82  1 (if l.lameNSSafeJoint then 1 else 0);
+			p  83  1 (if l.lameNSPsyTune   then 1 else 0);
+			p  84  4 l.lameATHType;
+			p  88  8 l.lameABRBitrate;
+			p  96 12 l.lameDelayStart;
+			p 108 12 l.lameDelayEnd;
+			p 120  2 l.lameSourceFrequency;
+			p 122  1 (if l.lameUnwise then 1 else 0);
+			p 123  3 l.lameStereoMode;
+			p 126  2 l.lameNoiseShaping;
+			p 128  8 l.lameMP3Gain;
+			p 136  2 0; (* Unused *)
+			p 138  3 l.lameSurround;
+			p 141 11 l.lamePreset;
+			p 152  2 0; (* Only 30 bits used *)
+			p 154 30 l.lameMusicLength;
+			p 184 16 l.lameMusicCRC;
+
+			let ptrref_after_lame = Ptr.Ref.append ptrref_after_encoder (Ptr.Ref.of_ptr lame) in
+			let ptrref_before_crc = Ptr.Ref.append header_and_side_info ptrref_after_lame in
+			let crc = Crc.create_ptrref ptrref_before_crc 0 in
+			let crc_p = Ptr.make 2 0 in
+			Ptr.put_16_of_int_bswap crc_p 0 crc;
+			Ptr.Ref.append ptrref_after_lame (Ptr.Ref.of_ptr crc_p);
 		)
-	);
-	!out_ref
+	) in
+	after_lame
 ;;
 
 
@@ -111,7 +135,7 @@ let make_xing xing header_and_side_info =
 let do_queue ?(debug_in=false) ?(debug_queue=false) ?(min_bitrate=0) ?(delete_beginning_junk=false) ?(delete_end_junk=false) ?(padding="mp3packer!\n") ?(recompress=false) ?(debug_recompress=false) ?(zero_whole_bad_frame=false) ?(minimize_bit_reservoir=false) in_name out_name =
 *)
 
-let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
+let do_queue state (in_obj : Mp3read.mp3read_ptr) out_obj =
 	let debug_in = state.q_debug_in in
 	let debug_queue = state.q_debug_queue in
 	let debug_recompress = state.q_debug_recompress in
@@ -123,8 +147,6 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 	let zero_whole_bad_frame = state.q_zero_whole_bad_frame in
 	let minimize_bit_reservoir = state.q_minimize_bit_reservoir in
 
-
-
 	(* Set to true if a buffer error occurs *)
 	let buffer_errors_ref = ref 0 in
 	(* The number of sync errors which occured *)
@@ -133,6 +155,8 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 	let recompress_errors_ref = ref 0 in
 	(* Set whether the recompress should warn about frequency overflows *)
 	let recompress_freq_overflow_warn_ref = ref (not state.q_silent) in
+
+	let t1 = Unix.gettimeofday () in
 
 (*
 	let in_obj = new mp3read_unix ~debug:debug_in in_name in
@@ -192,8 +216,49 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 	in_obj#seek first_got_at;
 
 	let k = first_frame.if_header in (* This replaces the old "k" global setting variable *)
-	let side_info_size = String.length first_frame.if_side_raw in
+	let side_info_size = Ptr.Ref.length first_frame.if_side_raw in
 	let unpadded_frame_length = unpadded_frame_length k.header_samplerate in
+
+
+	(* TEMP MULTIPROC *)
+(*
+	let procs = new Multiproc.processes 4 true in
+	let get_thread = Thread.create (fun _ ->
+		let rec do_stuff () = match procs#gather with
+			| Multiproc.Recv_exit -> ()
+			| _ -> do_stuff ()
+		in
+		do_stuff ()
+	) () in
+*)
+(*
+	let (stdin_read, stdin_write) = Unix.pipe () in
+	let (stdout_read, stdout_write) = Unix.pipe () in
+	let (stderr_read, stderr_write) = Unix.pipe () in
+	let proc_id = Unix.create_process Sys.argv.(0) [|Sys.argv.(0); "--worker"|] stdin_read stdout_write stderr_write in
+*)
+(*
+	Sys.set_signal Sys.sigint (Sys.Signal_handle (fun _ ->
+(*
+		ignore @@ trap_exception Unix.close stdin_write;
+		ignore @@ trap_exception Unix.close stdout_read;
+		ignore @@ trap_exception Unix.close stderr_read;
+*)
+		exit (-5);
+	));
+*)
+
+(*	Thread.delay 10.0;*)
+(*
+	Unix.close stdin_write;
+	Unix.close stdout_read;
+	Unix.close stderr_read;
+
+	Unix.close stdin_read;
+	Unix.close stdout_write;
+	Unix.close stderr_write;
+*)
+
 
 	(***********************)
 	(* DATA INITIALIZATION *)
@@ -263,7 +328,7 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 	) in
 
 	(* Returns a valid header given the bitrate info, common settings, and stereo mode *)
-	let bitrate_to_header = (
+	let (bitrate_to_header_string, bitrate_to_header) = (
 		let template = "\xFF\xFF\xFF\xFF" in
 		let pack_head = packBits template in
 
@@ -296,47 +361,72 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			| EmphasisCCITT -> 0b11
 		);
 
-		fun br ms is -> (
-			let out_head = String.copy template in
-			let pack_head = packBits out_head in
-			pack_head 16 4 br.bitrate_index; (* Bitrate *)
-			pack_head 22 1 (if br.bitrate_padding then 1 else 0);
-			pack_head 26 1 (if ms then 1 else 0);
-			pack_head 27 1 (if is then 1 else 0);
-			out_head
+		(
+			(fun br ms is -> (
+				let out_head = String.copy template in
+				let pack_head = packBits out_head in
+				pack_head 16 4 br.bitrate_index; (* Bitrate *)
+				pack_head 22 1 (if br.bitrate_padding then 1 else 0);
+				pack_head 26 1 (if ms then 1 else 0);
+				pack_head 27 1 (if is then 1 else 0);
+				out_head
+			))
+		,
+			(fun br ms is -> (
+				let out_head = Ptr.of_string template in
+				let p = Ptr.put_bits out_head in
+				p 16 4 br.bitrate_index;
+				p 22 1 (if br.bitrate_padding then 1 else 0);
+				p 26 1 (if ms then 1 else 0);
+				p 27 1 (if is then 1 else 0);
+				out_head
+			))
 		)
 	) in
 	let min_bitrate_now frame = number_to_bitrate min_bitrate frame in
 
 	(* Makes a string out of a given header and bitrate info *)
 	(* Always indicates no CRC *)
-	let string_of_header_and_bitrate = (
+	let ((*string_of_header_and_bitrate, *)ptrref_of_header_and_bitrate) = (
 		let bitrate_list = match k.header_id with
 			| MPEG1 -> [ (32,1);(40,2);(48,3);(56,4);(64,5);(80,6);(96,7);(112,8);(128,9);(160,10);(192,11);(224,12);(256,13);(320,14) ]
 			|   _   -> [ ( 8,1);(16,2);(24,3);(32,4);(40,5);(48,6);(56,7);( 64,8);( 80,9);( 96,10);(112,11);(128,12);(144,13);(160,14) ]
 		in
-		fun ?new_bitrate header -> (
-			let str = String.sub header.header_raw 0 4 in
-			packBits str 15 1 1; (* CRC *)
-			(match new_bitrate with
-				| Some b -> (
-					packBits str 16 4 b.bitrate_index;
-					packBits str 22 1 (if b.bitrate_padding then 1 else 0)
-				)
-				| None -> () (* Nuthin *)
-			);
-			str
+		(
+(*
+			(fun ?new_bitrate header ->
+				let str = String.sub header.header_raw_string 0 4 in
+				packBits str 15 1 1; (* CRC *)
+				(match new_bitrate with
+					| Some b -> (
+						packBits str 16 4 b.bitrate_index;
+						packBits str 22 1 (if b.bitrate_padding then 1 else 0)
+					)
+					| None -> () (* Nuthin *)
+				);
+				str
+			)
+		,
+*)
+			(fun header bitrate ->
+				let p = Ptr.Ref.to_ptr header.header_raw in
+				Ptr.put_bits p 15 1 1;
+				Ptr.put_bits p 16 4 bitrate.bitrate_index;
+				Ptr.put_bits p 22 1 (if bitrate.bitrate_padding then 1 else 0);
+				Ptr.Ref.of_ptr p
+			)
 		)
 	) in
 
 	(* Changes a side info string to be the specified padding *)
+(*
 	let string_of_side_and_offset = (
 		let bits = match k.header_id with
 			| MPEG1 -> 9
 			| _ -> 8
 		in
 		fun ?new_offset side -> (
-			let str = String.sub side.side_raw 0 side_info_size in
+			let str = String.sub side.side_raw_string 0 side_info_size in
 			(match new_offset with
 				| Some n -> (packBits str 0 bits n)
 				| None -> () (* Nothing *)
@@ -344,6 +434,18 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			str
 		)
 	) in
+*)
+	let ptrref_of_side_and_offset =
+		let bits = match k.header_id with
+			| MPEG1 -> 9
+			| _ -> 8
+		in
+		fun side offset -> (
+			let new_ptr = Ptr.Ref.to_ptr side.side_raw in
+			Ptr.put_bits new_ptr 0 bits offset;
+			Ptr.Ref.of_ptr new_ptr
+		)
+	in
 
 	(* Tweaks the side info to have the specified number of bytes in the reservoir *)
 	let update_side_reservoir = (match k.header_id with
@@ -358,23 +460,23 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			a
 		)
 	) in
-	
+
 
 	let print_bitrate a = printf "{\n num: %d\n pad: %B\n size: %d\n data: %d\n index: %d\n}\n" a.bitrate_num a.bitrate_padding a.bitrate_size a.bitrate_data a.bitrate_index in
 
 	(* Pretty-printer for time from a frame number *)
+	let seconds_per_frame = match k.header_samplerate with
+		| S48000 | S24000 -> 0.024
+		| S44100 | S22050 -> 0.0261224489795918
+		| S32000 | S16000 -> 0.036
+		| S12000          -> 0.048
+		| S11025          -> 0.0522448979591837
+		| S8000           -> 0.072
+	in
 	let string_time_of_frame =
-		let frame_time_mult = match k.header_samplerate with
-			| S48000 | S24000 -> 0.024
-			| S44100 | S22050 -> 0.0261224489795918
-			| S32000 | S16000 -> 0.036
-			| S12000          -> 0.048
-			| S11025          -> 0.0522448979591837
-			| S8000           -> 0.072
-		in
 (*		let mul_pair (a, b) c = (a *. c, b *. c) in*)
 		fun frame_num -> (
-			let s_float = float_of_int frame_num *. frame_time_mult in
+			let s_float = float_of_int frame_num *. seconds_per_frame in
 			let (s_floatfrac, s_floatint) = modf s_float in
 			let s_cents = int_of_float (s_floatfrac *. 100.0) in
 			let s_unnormal = int_of_float s_floatint in
@@ -423,7 +525,7 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			let first_bit = input_offset lsl 3 in (* The offset in bits *)
 			let second_bit = first_bit + a in     (* The first bit of the second granule *)
 			let last_bit = second_bit + b in      (* The first bit after the second granule *)
-			let reservoir_length_in_bits = String.length reservoir lsl 3 in
+			let reservoir_length_in_bits = Ptr.Ref.length reservoir lsl 3 in
 (*			let reservoir_length_in_bits = reservoir_unused_bytes lsl 3 in*)
 
 (*			Printf.printf "BOOGA got %d,%d,%d bit offset with %d bits available\n" first_bit second_bit last_bit reservoir_length_in_bits;*)
@@ -436,7 +538,7 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 				(* If zero_whole_bad_frame is set, then if one granule is bad count them both as bad *)
 				if zero_whole_bad_frame then (fgok && sgok, fgok && sgok) else (fgok, sgok)
 			) in
-			
+
 			let first_granule_bits = if first_granule_ok then max 0 a else 0 in
 			let second_granule_bits = if second_granule_ok then max 0 b else 0 in
 
@@ -447,16 +549,21 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			(* If neither granule is good, set to 0 rather than last_bit since last_bit may result in a substring off the end of the string, but with length 0 *)
 			let output_offset_bits = if first_granule_ok then first_bit else if second_granule_ok then second_bit else 0 in
 
-			let output_raw = String.copy input_side.side_raw in
-			if not first_granule_ok then (
-				(* Zero out the first granule's data *)
-				packBits output_raw  18 30 0;
-				packBits output_raw  48 29 0;
-			);
-			if not second_granule_ok then (
-				packBits output_raw  77 30 0;
-				packBits output_raw 107 29 0;
-			);
+			let output_raw = if first_granule_ok && second_granule_ok then (
+				input_side.side_raw
+			) else (
+				let output_raw_ptr = Ptr.Ref.to_ptr input_side.side_raw in
+				if not first_granule_ok then (
+					(* Zero out the first granule's data *)
+					Ptr.put_bits output_raw_ptr  18 30 0;
+					Ptr.put_bits output_raw_ptr  48 29 0;
+				);
+				if not second_granule_ok then (
+					Ptr.put_bits output_raw_ptr  77 30 0;
+					Ptr.put_bits output_raw_ptr 107 29 0;
+				);
+				Ptr.Ref.of_ptr output_raw_ptr
+			) in
 			let output_side = {
 				side_raw = output_raw;
 				side_offset = 0;
@@ -467,17 +574,18 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 				let output_length_bytes = output_side.side_bytes in
 				if output_length_bytes = 0 then (
 					(* Don't try to get any data if there is no data to get! *)
-					""
+					Ptr.Ref.null
 				) else if output_offset_bits land 7 = 0 then (
-					(* Byte-aligned; just sub the string *)
-					String.sub reservoir (output_offset_bits asr 3) output_length_bytes
+					(* Byte-aligned; just sub the ptrref *)
+					Ptr.Ref.sub reservoir (output_offset_bits asr 3) output_length_bytes
 				) else (
 					(* UH-OH! Need to do a bit-blit *)
 					let out = String.create output_length_bytes in
 					out.[output_length_bytes - 1] <- '\x00';
-					bit_blit reservoir output_offset_bits out 0 (first_granule_bits + second_granule_bits);
+					let reservoir_string = Ptr.Ref.to_string reservoir in
+					bit_blit reservoir_string output_offset_bits out 0 (first_granule_bits + second_granule_bits);
 
-					out
+					Ptr.Ref.of_string out
 				)
 			) in
 			(output_side, output_data, first_granule_ok && second_granule_ok)
@@ -487,7 +595,7 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			let first_bit = input_offset lsl 3 in
 			let second_bit = first_bit + a + b in
 			let last_bit = second_bit + c + d in
-			let reservoir_length_in_bits = String.length reservoir lsl 3 in
+			let reservoir_length_in_bits = Ptr.Ref.length reservoir lsl 3 in
 
 			let (first_granule_ok, second_granule_ok) = (
 				let fgok = (first_bit = second_bit || (first_bit >= 0 && second_bit <= reservoir_length_in_bits)) in
@@ -499,22 +607,27 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			let new_b = if first_granule_ok then b else 0 in
 			let new_c = if second_granule_ok then c else 0 in
 			let new_d = if second_granule_ok then d else 0 in
-			
+
 			let output_offset_bits = if first_granule_ok then max 0 first_bit else if second_granule_ok then max 0 second_bit else 0 in
-			
-			let output_raw = String.copy input_side.side_raw in
-			if not first_granule_ok then (
-				packBits output_raw  20 30 0;
-				packBits output_raw  50 29 0;
-				packBits output_raw  79 30 0;
-				packBits output_raw 109 29 0;
-			);
-			if not second_granule_ok then (
-				packBits output_raw 138 30 0;
-				packBits output_raw 168 29 0;
-				packBits output_raw 197 30 0;
-				packBits output_raw 227 29 0;
-			);
+
+			let output_raw = if first_granule_ok && second_granule_ok then (
+				input_side.side_raw
+			) else (
+				let output_raw_ptr = Ptr.Ref.to_ptr input_side.side_raw in
+				if not first_granule_ok then (
+					Ptr.put_bits output_raw_ptr  20 30 0;
+					Ptr.put_bits output_raw_ptr  50 29 0;
+					Ptr.put_bits output_raw_ptr  79 30 0;
+					Ptr.put_bits output_raw_ptr 109 29 0;
+				);
+				if not second_granule_ok then (
+					Ptr.put_bits output_raw_ptr 138 30 0;
+					Ptr.put_bits output_raw_ptr 168 29 0;
+					Ptr.put_bits output_raw_ptr 197 30 0;
+					Ptr.put_bits output_raw_ptr 227 29 0;
+				);
+				Ptr.Ref.of_ptr output_raw_ptr
+			) in
 			let output_side = {
 				side_raw = output_raw;
 				side_offset = 0;
@@ -525,18 +638,19 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 				let output_length_bytes = output_side.side_bytes in
 				if output_length_bytes = 0 then (
 					(* No data here *)
-					""
+					Ptr.Ref.null
 				) else if output_offset_bits land 7 = 0 then (
-					(* String copy *)
-					String.sub reservoir (output_offset_bits asr 3) output_length_bytes
+					(* Sub the ptrref *)
+					Ptr.Ref.sub reservoir (output_offset_bits asr 3) output_length_bytes
 				) else (
 					(* bit-blit! *)
 					let out = String.create output_length_bytes in
 					(* Zero the last byte so that no random memory junk gets in after the data bits *)
 					out.[output_length_bytes - 1] <- '\x00';
-					bit_blit reservoir output_offset_bits out 0 (new_a + new_b + new_c + new_d);
+					let reservoir_string = Ptr.Ref.to_string reservoir in
+					bit_blit reservoir_string output_offset_bits out 0 (new_a + new_b + new_c + new_d);
 
-					out
+					Ptr.Ref.of_string out
 				)
 			) in
 			(output_side, output_data, first_granule_ok && second_granule_ok)
@@ -544,20 +658,23 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 		| (_, ChannelMono) -> fun ({side_bits = [| a |]} as input_side) reservoir input_offset -> (
 			let first_bit = input_offset lsl 3 in
 			let last_bit = first_bit + a in
-			let reservoir_length_in_bits = String.length reservoir lsl 3 in
+			let reservoir_length_in_bits = Ptr.Ref.length reservoir lsl 3 in
 
 			let granule_ok = (first_bit = last_bit || (first_bit >= 0 && last_bit <= reservoir_length_in_bits)) in
 
 			let granule_bits = if granule_ok then max 0 a else 0 in
-			
+
 			let output_offset_bits = if granule_ok then first_bit else 0 in
-			
-			let output_raw = String.copy input_side.side_raw in
-			if not granule_ok then (
-				packBits output_raw  9 30 0;
-				packBits output_raw 39 30 0;
-				packBits output_raw 69  3 0;
-			);
+
+			let output_raw = if granule_ok then (
+				input_side.side_raw
+			) else (
+				let output_raw_ptr = Ptr.Ref.to_ptr input_side.side_raw in
+				Ptr.put_bits output_raw_ptr  9 30 0;
+				Ptr.put_bits output_raw_ptr 39 30 0;
+				Ptr.put_bits output_raw_ptr 69  3 0;
+				Ptr.Ref.of_ptr output_raw_ptr
+			) in
 			let output_side = {
 				side_raw = output_raw;
 				side_offset = 0;
@@ -567,15 +684,16 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			let output_data = (
 				let output_length_bytes = output_side.side_bytes in
 				if output_length_bytes = 0 then (
-					""
+					Ptr.Ref.null
 				) else if output_offset_bits land 7 = 0 then (
-					String.sub reservoir (output_offset_bits asr 3) output_length_bytes
+					Ptr.Ref.sub reservoir (output_offset_bits asr 3) output_length_bytes
 				) else (
 					let out = String.create output_length_bytes in
 					out.[output_length_bytes - 1] <- '\x00';
-					bit_blit reservoir output_offset_bits out 0 granule_bits;
+					let reservoir_string = Ptr.Ref.to_string reservoir in
+					bit_blit reservoir_string output_offset_bits out 0 granule_bits;
 
-					out
+					Ptr.Ref.of_string out
 				)
 			) in
 			(output_side, output_data, granule_ok)
@@ -583,24 +701,27 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 		| (_, _) -> fun ({side_bits = [| a;b |]} as input_side) reservoir input_offset -> (
 			let first_bit = input_offset lsl 3 in
 			let last_bit = first_bit + a + b in
-			let reservoir_length_in_bits = String.length reservoir lsl 3 in
-			
+			let reservoir_length_in_bits = Ptr.Ref.length reservoir lsl 3 in
+
 			let granule_ok = (first_bit = last_bit || (first_bit >= 0 && last_bit <= reservoir_length_in_bits)) in
 
 			let new_a = if granule_ok then max 0 a else 0 in
 			let new_b = if granule_ok then max 0 b else 0 in
-			
+
 			let output_offset_bits = if granule_ok then first_bit else 0 in
 
-			let output_raw = String.copy input_side.side_raw in
-			if not granule_ok then (
-				packBits output_raw  10 30 0;
-				packBits output_raw  40 30 0;
-				packBits output_raw  70  3 0;
-				packBits output_raw  73 30 0;
-				packBits output_raw 103 30 0;
-				packBits output_raw 133  3 0;
-			);
+			let output_raw = if granule_ok then (
+				input_side.side_raw
+			) else (
+				let output_raw_ptr = Ptr.Ref.to_ptr input_side.side_raw in
+				Ptr.put_bits output_raw_ptr  10 30 0;
+				Ptr.put_bits output_raw_ptr  40 30 0;
+				Ptr.put_bits output_raw_ptr  70  3 0;
+				Ptr.put_bits output_raw_ptr  73 30 0;
+				Ptr.put_bits output_raw_ptr 103 30 0;
+				Ptr.put_bits output_raw_ptr 133  3 0;
+				Ptr.Ref.of_ptr output_raw_ptr
+			) in
 			let output_side = {
 				side_raw = output_raw;
 				side_offset = 0;
@@ -610,15 +731,16 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			let output_data = (
 				let output_length_bytes = output_side.side_bytes in
 				if output_length_bytes = 0 then (
-					""
+					Ptr.Ref.null
 				) else if output_offset_bits land 7 = 0 then (
-					String.sub reservoir (output_offset_bits asr 3) output_length_bytes
+					Ptr.Ref.sub reservoir (output_offset_bits asr 3) output_length_bytes
 				) else (
 					let out = String.create output_length_bytes in
 					out.[output_length_bytes - 1] <- '\x00';
-					bit_blit reservoir output_offset_bits out 0 (new_a + new_b);
+					let reservoir_string = Ptr.Ref.to_string reservoir in
+					bit_blit reservoir_string output_offset_bits out 0 (new_a + new_b);
 
-					out
+					Ptr.Ref.of_string out
 				)
 			) in
 			(output_side, output_data, granule_ok)
@@ -626,29 +748,15 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 	) in
 
 	(* Make room for the beginning data, if it is to be saved *)
-(*
-	if not delete_beginning_junk then (
-		if debug_queue then printf "Writing the first %d bytes to the output file\n" in_obj#first_mp3_byte;
-		let in_temp = open_in_bin in_name in
-		let length = in_obj#first_mp3_byte in
-		let str = String.create length in
-		really_input in_temp str 0 length;
-		out_obj#output_this str;
-		close_in in_temp;
-	);
-*)
-	(* I think I can do this with one handle *)
 	if not delete_beginning_junk then (
 		if debug_queue then printf "Writing the first %d bytes to the output file\n" in_obj#first_mp3_byte;
 		let in_pos = in_obj#pos in
 		in_obj#seek 0;
 		let length = in_obj#first_mp3_byte in
-		let str = String.create length in
-		in_obj#read str 0 length;
-		out_obj#output_this str;
+		let ref = in_obj#read_ptrref length in
+		out_obj#output_this ref;
 		in_obj#seek in_pos;
 	);
-
 
 	(* Make room for the LAME/XING header *)
 	let (xing_bitrate, xing_pos, output_is_lame, xing_header_and_side_info) = (
@@ -661,11 +769,11 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 		) in
 		let min_lame_bitrate = bytes_to_bitrate (if is_lame then 156 else 140) in
 		let bitrate = max (min_bitrate_now 0) min_lame_bitrate in
-		out_obj#output_this (bitrate_to_header bitrate false false);
-		out_obj#output_this (String.make side_info_size '\x00');
-		let xing_header_and_side_info = (bitrate_to_header bitrate false false) ^ (String.make side_info_size '\x00') in
+		out_obj#output_this (Ptr.Ref.of_ptr (bitrate_to_header bitrate false false));
+		out_obj#seek (out_obj#pos + side_info_size);
+		let xing_header_and_side_info = Ptr.Ref.append_ptr (Ptr.Ref.of_ptr (bitrate_to_header bitrate false false)) (Ptr.clearret (Ptr.make side_info_size 0)) in
 		let wheresit = out_obj#pos in
-		out_obj#output_this (String.make bitrate.bitrate_data '\x00');
+		out_obj#seek (out_obj#pos + bitrate.bitrate_data);
 		if debug_queue then printf "XING frame located at %d\n" wheresit;
 		(bitrate, wheresit, is_lame, xing_header_and_side_info)
 	) in
@@ -720,6 +828,29 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 		done;
 		a
 	) in
+	let ptr_template_padding =
+		let len = String.length padding in
+		let num = (max_data_per_frame - 1) / len + 1 in
+		let ptr = Ptr.make (num * len) 0 in
+		for i = 0 to num - 1 do
+			Ptr.blit_from_string padding 0 ptr (i * len) len;
+		done;
+		ptr
+	in
+	let pad_f3_frame f3 goto =
+		let len_now = Ptr.Ref.length f3.f3_output_data in
+		let len_add = goto - len_now in
+		if len_add < 0 then (
+			failwith "ERROR: immutable frame data was set to be overwritten";
+		) else if len_add = 0 then (
+			()
+		) else (
+			if debug_queue then printf "padding frame...";
+			let ptrref_padding = Ptr.Ref.of_subptr ptr_template_padding len_now len_add in
+			f3.f3_output_data <- Ptr.Ref.append f3.f3_output_data ptrref_padding
+		)
+	in
+	let pad_full_f3_frame f3 = pad_f3_frame f3 f3.f3_bitrate.bitrate_data in
 
 
 	let q1 = List2.create () in
@@ -757,52 +888,75 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 				update_percent
 			) in
 
-(*			let side = side_info_of_string if_now.if_side_raw in*)
+(*			let side = side_info_of_string if_now.if_side_string in*)
 			let side = side_info_of_if if_now in
 			if debug_queue then (
 				Printf.printf " Reservoir bytes available: %d\n" bit_reservoir_so_far_unused;
 				Printf.printf " Reservoir bytes used: %d\n" side.side_offset;
 				Printf.printf " Data bits:%s\n" (Array.fold_left (fun a b -> Printf.sprintf "%s %d" a b) "" side.side_bits);
 				Printf.printf " Total data bits: %d\n" (Array.fold_left (+) 0 side.side_bits);
+				Printf.printf " Bit reservoir value length: %d\n" (Ptr.Ref.length bit_reservoir_so_far);
 			);
-			let combined_bit_reservoir = bit_reservoir_so_far ^ if_now.if_data_raw in
-			let (new_side_info, new_data_string, buffer_error, new_reservoir_unused) = (
-				let start_offset = String.length bit_reservoir_so_far - side.side_offset in
+			let combined_bit_reservoir = Ptr.Ref.append bit_reservoir_so_far if_now.if_data_raw in
+			if debug_queue then (
+				Printf.printf "Combined reservoir ptr:\n";
+				Ptr.Ref.print combined_bit_reservoir;
+			);
+			let (new_side_info, (*new_data_string,*) new_data, buffer_error, new_reservoir_unused) = (
+				let start_offset = Ptr.Ref.length bit_reservoir_so_far - side.side_offset in
 
 				let (side_use, data_use, everythings_ok) = side_info_find_ok side combined_bit_reservoir start_offset in
 (*				let everythings_ok = data_find_ok && side.side_offset <= bit_reservoir_so_far_unused in*)
 
-				let new_reservoir_unused = String.length combined_bit_reservoir - start_offset - String.length data_use in
+				let new_reservoir_unused = Ptr.Ref.length combined_bit_reservoir - start_offset - Ptr.Ref.length data_use in
 
 				if recompress && everythings_ok then (
 					(* FIX THIS! *)
 					try
-						let (q, recompress_error) = recompress_frame ~debug:debug_recompress {f1_num = frame_num; f1_header = if_now.if_header; f1_side = side_use; f1_data = data_use; f1_pad_exact = None} recompress_freq_overflow_warn_ref in
+						let frame_to_compress = {
+							f1_num = frame_num;
+							f1_header = if_now.if_header;
+							f1_side = side_use;
+							f1_data = data_use;
+							f1_pad_exact = None;
+						} in
+(*						if debug_queue || debug_recompress then Printf.printf "Scattering frame\n%!";*)
+(*						Printf.printf "Frame %d has %d=%d bytes\n%!" frame_num (Ptr.Ref.length data_use) side_use.side_bytes;*)
+(*						procs#scatter_frame frame_to_compress;*)
+(*						if debug_queue || debug_recompress then Printf.printf "Scattered frame %d\n%!" frame_num;*)
+						let (q, recompress_error) = recompress_frame ~debug:debug_recompress state.q_process_set frame_to_compress recompress_freq_overflow_warn_ref in
+(*						let (q, recompress_error) = (frame_to_compress, false) in*)
 						if recompress_error then (
-(*
-							let frame_time = (float_of_int frame_num) *. (match k.header_samplerate with
-								| S48000 | S24000 -> 0.024
-								| S44100 | S22050 -> 0.0261224489795918
-								| S32000 | S16000 -> 0.036
-								| S12000          -> 0.048
-								| S11025          -> 0.0522448979591837
-								| S8000           -> 0.072
-							) in
-							printf "\rWARNING: Decompression error on frame %d at ~%.2fs\n" frame_num frame_time;
-*)
+
 							if not state.q_silent then printf "\rWARNING: Decompression error on frame %d at %s\n" frame_num (string_time_of_frame frame_num);
 							incr recompress_errors_ref;
 						);
-						if String.length q.f1_data > String.length data_use then (
+(*
+(*						if debug_queue || debug_recompress then Printf.printf "Gathering frame\n%!";*)
+						let gathered = procs#gather in
+(*						if debug_queue || debug_recompress then Printf.printf "Gathered frame %d\n%!" frame_num;*)
+						(match gathered with
+							| Multiproc.Recv_frame (g, re) -> (
+								if g.f1_num <> q.f1_num then Printf.printf "ERROR: frame %d expected, but got %d instead\n" q.f1_num g.f1_num;
+								if Ptr.Ref.length q.f1_data <> Ptr.Ref.length g.f1_data then Printf.printf "ERROR: differing compression\n";
+								let qd = Ptr.Ref.to_ptr q.f1_data in
+								let gd = Ptr.Ref.to_ptr g.f1_data in
+								if gd <> qd then Printf.printf "ERROR: differing frame\n";
+							)
+							| Multiproc.Recv_EOF _ -> Printf.printf "ERROR: got EOF instead of frame %d\n" frame_num
+							| Multiproc.Recv_exit -> Printf.printf "ERROR: worker quit instead of frame %d\n" frame_num
+						);
+*)
+						if Ptr.Ref.length q.f1_data > Ptr.Ref.length data_use then (
 							(* If the repacked frame is larger than the original, just use the original *)
-							if debug_queue then printf " Oops. The repacked frame is larger than the original (%d > %d); reusing the input frame\n" (String.length q.f1_data) (String.length data_use);
+							if debug_queue then printf " Oops. The repacked frame is larger than the original (%d > %d); reusing the input frame\n" (Ptr.Ref.length q.f1_data) (Ptr.Ref.length data_use);
 							(side_use, data_use, not everythings_ok, new_reservoir_unused)
 						) else (
-							(q.f1_side, q.f1_data, not everythings_ok, new_reservoir_unused)
+							(q.f1_side, (*q.f1_string,*) q.f1_data, not everythings_ok, new_reservoir_unused)
 						)
 					with
 						e -> (
-							if debug_queue || debug_recompress then printf " Oops. The repacking the frame failed with error \"%s\"\n" (Printexc.to_string e);
+							if debug_queue || debug_recompress then printf " Oops. Repacking the frame failed with error \"%s\"\n" (Printexc.to_string e);
 							(side_use, data_use, not everythings_ok, new_reservoir_unused)
 						)
 				) else (
@@ -811,8 +965,13 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			) in
 
 			(* Overwrite the bit reservoir thingie here *)
-			let new_bit_reservoir = if String.length combined_bit_reservoir < max_reservoir_size then combined_bit_reservoir else (
-				String.sub combined_bit_reservoir (String.length combined_bit_reservoir - max_reservoir_size) max_reservoir_size
+			(* TODO: should this be <= instead of < ? *)
+
+			let new_bit_reservoir = if Ptr.Ref.length combined_bit_reservoir < max_reservoir_size then (
+				combined_bit_reservoir
+			) else (
+				let over = Ptr.Ref.length combined_bit_reservoir - max_reservoir_size in
+				Ptr.Ref.sub combined_bit_reservoir over max_reservoir_size
 			) in
 			if wanted_at <> got_at then (
 (*
@@ -845,10 +1004,16 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 				incr buffer_errors_ref;
 			);
 
-			if debug_queue then printf " Side:  \"%s\"\n" (to_hex new_side_info.side_raw);
-			if debug_queue then printf " Data:  \"%s\"\n" (to_hex new_data_string);
+			if debug_queue then printf " Side:  \"%s\"\n" (Ptr.Ref.to_HEX new_side_info.side_raw);
+			if debug_queue then printf " Data:  \"%s\"\n" (Ptr.Ref.to_HEX new_data);
 
-			List2.append q1 {f1_num = frame_num; f1_header = if_now.if_header; f1_side = new_side_info; f1_data = new_data_string; f1_pad_exact = None};
+			List2.append q1 {
+				f1_num = frame_num;
+				f1_header = if_now.if_header;
+				f1_side = new_side_info;
+				f1_data = new_data;
+				f1_pad_exact = None;
+			};
 
 			if debug_queue then printf " A->B (found frame %d)\n" frame_num;
 			mark_q1 ();
@@ -865,16 +1030,16 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 
 		(* Ignore since the padding is set by side-effect *)
 		ignore (List2.rev_fold (fun (new_pad_real,new_pad_max) f1 ->
-			let bytes_to_end_in_this_frame = String.length f1.f1_data + new_pad_real in
-			let bytes_to_end_in_this_frame_max = String.length f1.f1_data + new_pad_max in
-			
+			let bytes_to_end_in_this_frame = Ptr.Ref.length f1.f1_data + new_pad_real in
+			let bytes_to_end_in_this_frame_max = Ptr.Ref.length f1.f1_data + new_pad_max in
+
 			let required_bytes_from_previous_frame = max 0 (bytes_to_end_in_this_frame - max_data_per_frame) in
 			let required_bytes_from_previous_frame_max = max 0 (min max_reservoir_size (bytes_to_end_in_this_frame_max - max_data_per_frame)) in
-			
-			if debug_queue then printf "  %d (%db) %3d - %3d\n" f1.f1_num (String.length f1.f1_data) new_pad_real new_pad_max;
-			
+
+			if debug_queue then printf "  %d (%db) %3d - %3d\n" f1.f1_num (Ptr.Ref.length f1.f1_data) new_pad_real new_pad_max;
+
 			if new_pad_real = new_pad_max then f1.f1_pad_exact <- Some new_pad_real;
-			
+
 			(required_bytes_from_previous_frame,required_bytes_from_previous_frame_max)
 		) (0,max_reservoir_size) q1);
 
@@ -884,7 +1049,7 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 			| {f1_pad_exact = None} -> false
 			| _ -> true
 		) in
-		
+
 		if not marked then (
 			(* END *)
 			if debug_queue then printf " B->X!\n";
@@ -900,24 +1065,24 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 
 		(* Is there any more to copy? *)
 		let copy_stuff_padding = (if List2.is_empty q1 then None else (List2.peek_first q1).f1_pad_exact) in
-		
+
 		match copy_stuff_padding with
 		| Some pad -> (
-			
+
 			let f1 = List2.take_first q1 in
 
 			(* Figure out how much data is in the last frame in Q2. *)
 			(* This is necessary to take padding into account for bitrate allocation *)
 			let (bytes_to_store, prev_padding) = if List2.is_empty q2 then (
-				(String.length f1.f1_data + pad, 0)
+				(Ptr.Ref.length f1.f1_data + pad, 0)
 			) else (
 				let f2 = List2.peek_last q2 in
-				(String.length f1.f1_data + pad - (min max_reservoir_size f2.f2_bytes_left), f2.f2_bytes_left)
+				(Ptr.Ref.length f1.f1_data + pad - (min max_reservoir_size f2.f2_bytes_left), f2.f2_bytes_left)
 			) in
 
 			let bitrate_optimal = bytes_to_bitrate bytes_to_store in
 			let bitrate_minimum = min_bitrate_now f1.f1_num in
-			if debug_queue then printf "  %d: %d+%d bytes (%d optimal, %d minimum)\n" f1.f1_num (String.length f1.f1_data) pad bitrate_optimal.bitrate_data bitrate_minimum.bitrate_data;
+			if debug_queue then printf "  %d: %d+%d bytes (%d optimal, %d minimum)\n" f1.f1_num (Ptr.Ref.length f1.f1_data) pad bitrate_optimal.bitrate_data bitrate_minimum.bitrate_data;
 
 			let bitrate_use = if bitrate_optimal.bitrate_data > bitrate_minimum.bitrate_data then bitrate_optimal else bitrate_minimum in
 
@@ -942,8 +1107,20 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 				if debug_queue then printf "  NOCHECK\n";
 			);
 
-			List2.append q2 {f2_num = f1.f1_num; f2_bitrate = bitrate_use; f2_header = f1.f1_header; f2_side = f1.f1_side; f2_data = f1.f1_data; f2_pad = pad; f2_offset = min max_reservoir_size prev_padding; f2_bytes_left = bitrate_use.bitrate_data - bytes_to_store + pad; f2_flag = false; f2_check_output = check_output};
-			
+			List2.append q2 {
+				f2_num = f1.f1_num;
+				f2_bitrate = bitrate_use;
+				f2_header = f1.f1_header;
+				f2_side = f1.f1_side;
+(*				f2_string = f1.f1_string;*)
+				f2_data = f1.f1_data;
+				f2_pad = pad;
+				f2_offset = min max_reservoir_size prev_padding;
+				f2_bytes_left = bitrate_use.bitrate_data - bytes_to_store + pad;
+				f2_flag = false;
+				f2_check_output = check_output;
+			};
+
 			if debug_queue then printf " C->C (copied to Q2)\n";
 			q1_to_q2 eof
 		)
@@ -960,17 +1137,16 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 
 		(* Is there any more to copy? *)
 		let copy_stuff_padding = (if List2.is_empty q1 then None else (List2.peek_first q1).f1_pad_exact) in
-		
+
 		match copy_stuff_padding with
 		| Some pad -> (
-			(* Do things here *)
 			let f1 = List2.take_first q1 in
-			
-			let (bytes_to_store, prev_padding) = (String.length f1.f1_data + pad - !q3_current_reservoir_ref, !q3_current_reservoir_ref) in
+
+			let (bytes_to_store, prev_padding) = (Ptr.Ref.length f1.f1_data + pad - !q3_current_reservoir_ref, !q3_current_reservoir_ref) in
 
 			let bitrate_optimal = bytes_to_bitrate bytes_to_store in
 			let bitrate_minimum = min_bitrate_now f1.f1_num in
-			if debug_queue then printf "  %d: %d+%d bytes (%d optimal, %d minimum)\n" f1.f1_num (String.length f1.f1_data) pad bitrate_optimal.bitrate_data bitrate_minimum.bitrate_data;
+			if debug_queue then printf "  %d: %d+%d bytes (%d optimal, %d minimum)\n" f1.f1_num (Ptr.Ref.length f1.f1_data) pad bitrate_optimal.bitrate_data bitrate_minimum.bitrate_data;
 			if debug_queue then printf "   Reservoir bytes: %d\n" !q3_current_reservoir_ref;
 
 (*			printf "A:  %d\n" !q3_current_reservoir_ref;*)
@@ -981,20 +1157,28 @@ let do_queue state (in_obj : Mp3read.virt_mp3read) out_obj =
 				if debug_queue then printf "   Writing to frame %d\n" f3.f3_num;
 				let write_to_pos = !q3_bytes_ref - bytes_seen - !q3_current_reservoir_ref + read_from_pos in
 				if debug_queue then printf "    Start writing byte %d to byte %d\n" read_from_pos write_to_pos;
-				if write_to_pos >= String.length f3.f3_output_data then (
-					if debug_queue then printf "    Oops. Nothing on this frame yet (length %d)\n" (String.length f3.f3_output_data);
+				if write_to_pos >= f3.f3_bitrate.bitrate_data then (
+					if debug_queue then printf "    Oops. Nothing on this frame yet (length %d)\n" (f3.f3_bitrate.bitrate_data);
+					(* We need to pad the ptrref to the bitrate size *)
+					pad_full_f3_frame f3;
 					f3.f3_flag <- true;
-if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
-					(bytes_seen + String.length f3.f3_output_data, read_from_pos, bytes_seen + String.length f3.f3_output_data)
+					if debug_queue then printf "     %s\n" (Ptr.Ref.to_HEX f3.f3_output_data);
+					(bytes_seen + f3.f3_bitrate.bitrate_data, read_from_pos, bytes_seen + f3.f3_bitrate.bitrate_data)
 				) else (
-					let bytes_to_write = min (String.length f3.f3_output_data - write_to_pos) (String.length f1.f1_data - read_from_pos) in
+					let bytes_to_write = min (f3.f3_bitrate.bitrate_data - write_to_pos) (Ptr.Ref.length f1.f1_data - read_from_pos) in
 					if debug_queue then printf "    Output %d bytes\n" bytes_to_write;
 					if bytes_to_write > 0 then (
-						String.blit f1.f1_data read_from_pos f3.f3_output_data write_to_pos bytes_to_write
+(*						String.blit f1.f1_string read_from_pos f3.f3_output_data write_to_pos bytes_to_write;*)
+						if Ptr.Ref.length f3.f3_output_data < write_to_pos then (
+							if debug_queue then printf "     Need some padding, though (%d<%d)\n" (Ptr.Ref.length f3.f3_output_data) write_to_pos;
+							pad_f3_frame f3 write_to_pos;
+						);
+						let add_data = Ptr.Ref.sub f1.f1_data read_from_pos bytes_to_write in
+						f3.f3_output_data <- Ptr.Ref.append f3.f3_output_data add_data;
 					);
-if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
+					if debug_queue then printf "     %s\n" (Ptr.Ref.to_HEX f3.f3_output_data);
 					let new_frame_started_at = (if read_from_pos = 0 then bytes_seen + write_to_pos else frame_started_at) in
-					(bytes_seen + String.length f3.f3_output_data, read_from_pos + bytes_to_write, new_frame_started_at)
+					(bytes_seen + f3.f3_bitrate.bitrate_data, read_from_pos + bytes_to_write, new_frame_started_at)
 				)
 			) (0,0,0) q3 in
 
@@ -1003,9 +1187,10 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 
 			(* Create a header and side info for the frame *)
 (*			printf " B: %d\n" !q3_current_reservoir_ref;*)
-			let header_side_raw = (string_of_header_and_bitrate ~new_bitrate:bitrate_use f1.f1_header) ^ (string_of_side_and_offset ~new_offset:!q3_current_reservoir_ref f1.f1_side) in
+(*			let header_side_raw_string = (string_of_header_and_bitrate ~new_bitrate:bitrate_use f1.f1_header) ^ (string_of_side_and_offset ~new_offset:!q3_current_reservoir_ref f1.f1_side) in*)
+			let header_side_raw = Ptr.Ref.append (ptrref_of_header_and_bitrate f1.f1_header bitrate_use) (ptrref_of_side_and_offset f1.f1_side !q3_current_reservoir_ref) in
 
-			if debug_queue then printf "Found string in frame %d:\n \"%s\"\n" f1.f1_num (to_hex header_side_raw);
+			if debug_queue then printf "Found string in frame %d:\n \"%s\"\n" f1.f1_num (Ptr.Ref.to_HEX header_side_raw);
 
 (*			printf " ?: %d\n" (unpackBits header_side_raw 0 9);*)
 
@@ -1013,21 +1198,25 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 			let f_new = {
 				f3_num = f1.f1_num;
 				f3_header_side_raw = header_side_raw;
-				f3_output_data = String.sub template_padding 0 bitrate_use.bitrate_data;
+(*				f3_output_string = String.sub template_padding 0 bitrate_use.bitrate_data;*)
+				f3_output_data = Ptr.Ref.null;
+				f3_bitrate = bitrate_use;
 				f3_flag = false;
 			} in
-			let bytes_left_for_current_frame = max 0 (String.length f1.f1_data - read_from_pos) in
+			let bytes_left_for_current_frame = max 0 (Ptr.Ref.length f1.f1_data - read_from_pos) in
 			if bytes_left_for_current_frame > 0 then (
 				if debug_queue then printf "   Writing last %d bytes to current frame %d\n" bytes_left_for_current_frame f1.f1_num;
-				String.blit f1.f1_data read_from_pos f_new.f3_output_data 0 bytes_left_for_current_frame
+(*				String.blit f1.f1_string read_from_pos f_new.f3_output_string 0 bytes_left_for_current_frame;*)
+				let add_data = Ptr.Ref.sub f1.f1_data read_from_pos bytes_left_for_current_frame in
+				f_new.f3_output_data <- Ptr.Ref.append f_new.f3_output_data add_data;
 			);
 
 			List2.append q3 f_new;
 			q3_bytes_ref := !q3_bytes_ref + bitrate_use.bitrate_data;
-			q3_current_reservoir_ref := min max_reservoir_size (!q3_bytes_ref - frame_started_at - String.length f1.f1_data);
+			q3_current_reservoir_ref := min max_reservoir_size (!q3_bytes_ref - frame_started_at - Ptr.Ref.length f1.f1_data);
 
 			if debug_queue then printf "   New Q3 bytes ref: %d\n" !q3_bytes_ref;
-			if debug_queue then printf "   New reservoir: %d (%d - %d - %d)\n" !q3_current_reservoir_ref !q3_bytes_ref frame_started_at (String.length f1.f1_data);
+			if debug_queue then printf "   New reservoir: %d (%d - %d - %d)\n" !q3_current_reservoir_ref !q3_bytes_ref frame_started_at (Ptr.Ref.length f1.f1_data);
 
 			if debug_queue then printf " D->D (copied to Q3)\n";
 			q1_to_q3 eof
@@ -1081,45 +1270,59 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 
 		(* Is there any more to copy? *)
 		let copy_stuff = (if List2.is_empty q2 then false else (List2.peek_first q2).f2_flag) in
-		
+
 		if copy_stuff then (
-			
+
 			(* Do things here *)
 			let f2 = List2.take_first q2 in
-			if debug_queue then printf "  %d: %d+%d bytes in %d byte frame with reservoir %d (%d bytes left)\n" f2.f2_num (String.length f2.f2_data) f2.f2_pad f2.f2_bitrate.bitrate_data f2.f2_offset f2.f2_bytes_left;
-			
+			if debug_queue then printf "  %d: %d+%d bytes in %d byte frame with reservoir %d (%d bytes left)\n" f2.f2_num (Ptr.Ref.length f2.f2_data) f2.f2_pad f2.f2_bitrate.bitrate_data f2.f2_offset f2.f2_bytes_left;
+
 			let (bytes_seen, read_from_pos) = List2.fold (fun (bytes_seen, read_from_pos) f3 ->
 				if debug_queue then printf "   Writing to frame %d\n" f3.f3_num;
 				let write_to_pos = !q3_bytes_ref - bytes_seen - f2.f2_offset + read_from_pos in
 				if debug_queue then printf "    Start writing byte %d to byte %d\n" read_from_pos write_to_pos;
-				if write_to_pos >= String.length f3.f3_output_data then (
-					if debug_queue then printf "    Oops. Nothing on this frame yet (length %d)\n" (String.length f3.f3_output_data);
+				if write_to_pos >= f3.f3_bitrate.bitrate_data then (
+					if debug_queue then printf "    Oops. Nothing on this frame yet (length %d)\n" (f3.f3_bitrate.bitrate_data);
+					(* Pad the full frame *)
+					pad_full_f3_frame f3;
 					f3.f3_flag <- true;
-					(bytes_seen + String.length f3.f3_output_data, read_from_pos)
+					(bytes_seen + f3.f3_bitrate.bitrate_data, read_from_pos)
 				) else (
-					let bytes_to_write = min (String.length f3.f3_output_data - write_to_pos) (String.length f2.f2_data - read_from_pos) in
+					let bytes_to_write = min (f3.f3_bitrate.bitrate_data - write_to_pos) (Ptr.Ref.length f2.f2_data - read_from_pos) in
 					if debug_queue then printf "    Output %d bytes\n" bytes_to_write;
 					if bytes_to_write > 0 then (
-						String.blit f2.f2_data read_from_pos f3.f3_output_data write_to_pos bytes_to_write
+(*						String.blit f2.f2_string read_from_pos f3.f3_output_string write_to_pos bytes_to_write;*)
+						if Ptr.Ref.length f3.f3_output_data < write_to_pos then (
+							if debug_queue then printf "     Need some padding, though (%d<%d)\n" (Ptr.Ref.length f3.f3_output_data) write_to_pos;
+							pad_f3_frame f3 write_to_pos;
+						);
+						let add_data = Ptr.Ref.sub f2.f2_data read_from_pos bytes_to_write in
+						f3.f3_output_data <- Ptr.Ref.append f3.f3_output_data add_data;
 					);
-					(bytes_seen + String.length f3.f3_output_data, read_from_pos + bytes_to_write)
+					(bytes_seen + f3.f3_bitrate.bitrate_data, read_from_pos + bytes_to_write)
 				)
 			) (0,0) q3 in
 
-			let header_side_raw = (string_of_header_and_bitrate ~new_bitrate:f2.f2_bitrate f2.f2_header) ^ (string_of_side_and_offset ~new_offset:f2.f2_offset f2.f2_side) in
-			
-			if debug_queue then printf "Found string in frame %d:\n \"%s\"\n" f2.f2_num (to_hex header_side_raw);
+(*			let header_side_raw_string = (string_of_header_and_bitrate ~new_bitrate:f2.f2_bitrate f2.f2_header) ^ (string_of_side_and_offset ~new_offset:f2.f2_offset f2.f2_side) in*)
+			let header_side_raw = Ptr.Ref.append (ptrref_of_header_and_bitrate f2.f2_header f2.f2_bitrate) (ptrref_of_side_and_offset f2.f2_side f2.f2_offset) in
+
+			if debug_queue then printf "Found string in frame %d:\n \"%s\"\n" f2.f2_num (Ptr.Ref.to_HEX header_side_raw);
 
 			(* Add the new frame to Q3 *)
 			let f_new = {
 				f3_num = f2.f2_num;
 				f3_header_side_raw = header_side_raw;
-				f3_output_data = String.sub template_padding 0 f2.f2_bitrate.bitrate_data;
+(*				f3_output_string = String.sub template_padding 0 f2.f2_bitrate.bitrate_data;*)
+				f3_output_data = Ptr.Ref.null;
+				f3_bitrate = f2.f2_bitrate;
 				f3_flag = false;
 			} in
-			if read_from_pos < String.length f2.f2_data then (
-				if debug_queue then printf "   Writing last %d bytes to current frame %d\n" (String.length f2.f2_data - read_from_pos) f2.f2_num;
-				String.blit f2.f2_data read_from_pos f_new.f3_output_data 0 (String.length f2.f2_data - read_from_pos);
+			let bytes_left_for_current_frame = Ptr.Ref.length f2.f2_data - read_from_pos in
+			if read_from_pos < Ptr.Ref.length f2.f2_data then (
+				if debug_queue then printf "   Writing last %d bytes to current frame %d\n" bytes_left_for_current_frame f2.f2_num;
+(*				String.blit f2.f2_string read_from_pos f_new.f3_output_string 0 bytes_left_for_current_frame;*)
+				let add_data = Ptr.Ref.sub f2.f2_data read_from_pos bytes_left_for_current_frame in
+				f_new.f3_output_data <- Ptr.Ref.append f_new.f3_output_data add_data;
 			);
 			List2.append q3 f_new;
 			q3_bytes_ref := !q3_bytes_ref + f2.f2_bitrate.bitrate_data;
@@ -1141,26 +1344,37 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 
 		(* This really needs to be run every time q2_to_q3 flags something in q3 *)
 		(* Otherwise it will keep searching for a place to start writing at the first frame of q3, which may be quite inefficient *)
-		
+
 		(* Ignore the f3_flag if eof is set *)
 		let copy_stuff = (if List2.is_empty q3 then false else if eof then true else (List2.peek_first q3).f3_flag) in
-		
+
 		if copy_stuff then (
-			
+
 			let f3 = List2.take_first q3 in
-			q3_bytes_ref := !q3_bytes_ref - String.length f3.f3_output_data;
+			q3_bytes_ref := !q3_bytes_ref - f3.f3_bitrate.bitrate_data;
+
+
+			if eof then pad_full_f3_frame f3;
+
+			if debug_queue then Ptr.Ref.print f3.f3_output_data;
+(*			assert (Ptr.Ref.length f3.f3_output_data = f3.f3_bitrate.bitrate_data);*)
 
 			(* Update output info *)
-			let f3_bitrate = (bytes_to_bitrate (String.length f3.f3_output_data)) in
+(*			let f3_bitrate = (bytes_to_bitrate (String.length f3.f3_output_string)) in*)
+			let f3_bitrate = f3.f3_bitrate in
 			max_output_bitrate_ref := max !max_output_bitrate_ref f3_bitrate;
 			min_output_bitrate_ref := min !min_output_bitrate_ref f3_bitrate;
 (*			incr total_frames_ref;*)
-			total_frame_bytes_ref := !total_frame_bytes_ref + String.length f3.f3_header_side_raw + String.length f3.f3_output_data;
+			total_frame_bytes_ref := !total_frame_bytes_ref + Ptr.Ref.length f3.f3_header_side_raw + f3.f3_bitrate.bitrate_data;
 			Expandarray.set frame_locations f3.f3_num out_obj#pos;
 
 			out_obj#output_this f3.f3_header_side_raw;
 			out_obj#output_this f3.f3_output_data;
-			
+
+			if debug_queue then (
+				Ptr.Ref.print f3.f3_output_data;
+			);
+
 			if debug_queue then printf " G->G (outputted)\n";
 			q3_to_output eof
 		) else (
@@ -1173,14 +1387,14 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 		(* This is basically the same as B (mark Q1) except it utilizes the fact that the maximum padding needed on the last frame is 0 *)
 		(* Ignore since the padding is set by side-effect *)
 		ignore (List2.rev_fold (fun new_pad_real f1 ->
-			let bytes_to_end_in_this_frame = String.length f1.f1_data + new_pad_real in
-			
+			let bytes_to_end_in_this_frame = Ptr.Ref.length f1.f1_data + new_pad_real in
+
 			let required_bytes_from_previous_frame = max 0 (bytes_to_end_in_this_frame - max_data_per_frame) in
-			
-			if debug_queue then printf "  %d (%db) %3d exactly\n" f1.f1_num (String.length f1.f1_data) new_pad_real;
-			
+
+			if debug_queue then printf "  %d (%db) %3d exactly\n" f1.f1_num (Ptr.Ref.length f1.f1_data) new_pad_real;
+
 			f1.f1_pad_exact <- Some new_pad_real;
-			
+
 			required_bytes_from_previous_frame
 		) 0 q1);
 
@@ -1203,22 +1417,32 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 			f2.f2_flag <- true;
 			f2.f2_offset
 		) 0 q2);
-		
+
 		if debug_queue then printf " I->F (Q2 flushed)\n";
 		q2_to_q3 true
 	) in
 
+	(* Modify parts for multiproc *)
+	(* Basically we need to do A separately from the rest *)
+(*	let multi_input_to_q1*)
+
 	if debug_queue then printf " A\n";
-	let total_frames = input_to_q1 0 1 "" 0 in
+	let total_frames = input_to_q1 0 1 Ptr.Ref.null 0 in
 
-(*	if debug_queue then printf "Functional %d == Imperative %d???\n" total_frames !total_frames_ref;*)
+	let t2 = Unix.gettimeofday () in
 
-	if not state.q_silent then printf "\r100%% done with %d frames\n%!" total_frames;
-	
+	if not state.q_silent then (
+		let file_time = float_of_int total_frames *. seconds_per_frame in
+		printf "\r100%% done with %d frames (%.2fx)\n%!" total_frames (file_time /. (t2 -. t1));
+	);
+
 	(********************************)
 	(* EVERY FRAME HAS BEEN WRITTEN *)
 	(********************************)
-
+(*
+	procs#scatter_exit;
+	Thread.join get_thread;
+*)
 	(* See whether the input info matches the actual info *)
 	(match in_xing_option with
 		| Some {xingNumFrames = Some xing_frames} when xing_frames <> total_frames -> (
@@ -1228,27 +1452,13 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 	);
 
 	(* Write the trailing non-MP3 data, if it is to be saved *)
-(*
-	if not delete_end_junk then (
-		if debug_queue then printf "Writing the last %d bytes to the output file\n" (in_obj#length - in_obj#last_mp3_byte - 1);
-		let in_temp = open_in_bin in_name in
-		let length = in_obj#length - in_obj#last_mp3_byte - 1 in
-		let str = String.create length in
-		seek_in in_temp (in_obj#last_mp3_byte + 1);
-		really_input in_temp str 0 length;
-		out_obj#output_this str;
-		close_in in_temp;
-	);
-*)
-	(* Again with one handle *)
 	if not delete_end_junk then (
 		if debug_queue then printf "Writing the last %d bytes to the output file\n" (in_obj#length - in_obj#last_mp3_byte - 1);
 		let in_pos = in_obj#pos in
 		let length = in_obj#length - (in_obj#last_mp3_byte + 1) in
-		let str = String.create length in
 		in_obj#seek (in_obj#last_mp3_byte + 1);
-		in_obj#read str 0 length;
-		out_obj#output_this str;
+		let ref = in_obj#read_ptrref length in
+		out_obj#output_this ref;
 		in_obj#seek in_pos;
 	);
 
@@ -1396,8 +1606,8 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 			}
 		)
 	) in (* out_xing *)
-	let xing_string = make_xing out_xing xing_header_and_side_info in
-	if debug_queue then printf "XING tag:\n  %s\n" (to_hex xing_string);
+	let xing = make_xing out_xing xing_header_and_side_info in
+	if debug_queue then printf "XING tag:\n  %s\n" (Ptr.Ref.to_HEX xing);
 	if debug_queue then (match (output_is_lame, in_xing_option) with
 		| (false, None) ->   printf "  None -> XING\n";
 		| (false, Some x) -> printf "  XING -> XING\n";
@@ -1410,7 +1620,7 @@ if debug_queue then printf "     %s\n" (to_hex f3.f3_output_data);
 	);
 	out_obj#seek xing_pos;
 	if debug_queue then printf "  Writing tag at %d\n" xing_pos;
-	out_obj#output_this xing_string;
+	out_obj#output_this xing;
 
 	in_obj#close;
 	out_obj#close;

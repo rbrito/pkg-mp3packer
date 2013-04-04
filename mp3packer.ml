@@ -25,25 +25,40 @@ open Mp3types;;
 
 (*Unicode.set_utf8_output ();;*)
 
-
-
+(* XXX XXX XXX *)
 (*
-let t1 = Unix.gettimeofday ();;
+match copy_file_times_by_name "out.txt" "out_check.txt" with
+| Normal () -> Printf.printf "OK\n"
+| Error e -> raise e
+;;
+exit 477;;
 *)
-let version = "1.26-fork";;
+(* XXX XXX XXX *)
+
+
+
+
+(*let t1 = Unix.gettimeofday ();;*)
+
+let version = "2.00-248";;
 
 let padding = Printf.sprintf "mp3packer%s\n" version;;
 
-let usage_head = Printf.sprintf "\nMP3 Packer version %s%s\nCopyright 2006-2008 Reed \"Omion\" Wilson\nThis program is covered under the GNU GPL.\nSee gpl.txt or mp3packer.html for more information\nNumber of processors detected: %d\n" version (if Sys.word_size > 32 then Printf.sprintf " (%d-bit)" Sys.word_size else "") Mp3types.detected_processors;;
+let features_ref = ref [];;
+if Sys.word_size > 32 then features_ref := Printf.sprintf "%d-bit" Sys.word_size :: !features_ref;;
+if sse41_ok then features_ref := "SSE4.1" :: !features_ref;;
+let rec make_features_string = function
+	| a :: b :: c -> a ^ ", " ^ make_features_string (b :: c)
+	| a :: [] -> a
+	| [] -> ""
+;;
+let features_string = make_features_string !features_ref;;
+
+let usage_head = Printf.sprintf "\nMP3 Packer version %s%s\nCopyright 2006-2012 Reed \"Omion\" Wilson\nThis program is covered under the GNU GPL.\nSee gpl.txt or mp3packer.html for more information\nNumber of processors detected: %d\n" version (if features_string = "" then "" else " (" ^ features_string ^ ")") Mp3types.detected_processors;;
 
 (*****************)
 (* PARSE OPTIONS *)
 (*****************)
-
-let argv = match Unicode.argv_opt with
-	| Unicode.Normal u -> u
-	| Unicode.Error _ -> Sys.argv
-;;
 
 (*
 (*Printf.printf ">>1:%s:11111111111111111111111111111111<<\n\n" (match Unicode.utf16_of_utf8 argv.(1) with;;*)
@@ -90,10 +105,12 @@ let rename_input_ref = ref false;;
 let recompress_ref = ref false;;
 let zero_whole_bad_frame_ref = ref false;;
 let minimize_bit_reservoir_option_ref = ref None;;
+let copy_time_ref = ref false;;
+let process_set_ref = ref (if sse41_ok then SSE41 else Set_base);;
 
 let niceness_ref = ref 10;;
 
-let worker_ref = ref false;;
+let worker_ref = ref None;;
 
 
 
@@ -111,36 +128,45 @@ let debug_parse = function
 	| _ ->      (debug_in_ref := false; debug_out_ref := false; debug_recompress_ref := false)
 ;;
 
-let keep_ok_parse = function
+let keep_ok_parse v = match String.lowercase v with
 (*	| "input" | "in" -> keep_ok_ref := Keep_ok_input*)
 	| "output" | "out" -> keep_ok_ref := Keep_ok_output
 	| _ -> keep_ok_ref := Keep_ok_both
 ;;
-let keep_notok_parse = function
+let keep_notok_parse v = match String.lowercase v with
 	| "input" | "in" -> keep_notok_ref := Keep_notok_input
 	| "output" | "out" -> keep_notok_ref := Keep_notok_output
 	| _ -> keep_notok_ref := Keep_notok_both
 ;;
 
+let process_parse v = match String.lowercase v with
+	| "sse41" when sse41_ok -> process_set_ref := SSE41
+	| "sse41" -> Printf.printf "WARNING: SSE4.1 unsupported\n"
+	| "base" -> process_set_ref := Set_base
+	| _ -> ()
+;;
+
 let args = Arg.align [
-	("-b", Arg.Int (fun x -> min_bitrate_ref := max 0 x), "# Minimum bitrate allowed for output. Defaults to 0");
-	("-t", Arg.Set delete_begin_ref,                       " Strip non-mp3 data at the beginning (mainly ID3v2 tags)");
-	("-s", Arg.Set delete_end_ref,                         " Strip non-mp3 data at the end (mainly tags)");
-	("-z", Arg.Set recompress_ref,                         " Recompress frames to find optimal settings (takes time)");
-	("-a", Arg.Set_string append_ref,              "\"-vbr\" Changes the string to append to the filename in certain cases");
-	("-A", Arg.Set do_files_with_appended_string_ref,      " Don't skip files in directory which already have the -a string");
-	("-u", Arg.Set rename_input_ref,                       " Updates the input file and renames the orig to the output name");
-	("-w", Arg.Set zero_whole_bad_frame_ref,               " Silences a whole frame on buffer error. Otherwise skips granules");
+	("-b", Arg.Int (fun x -> min_bitrate_ref := max 0 x),  "# Minimum bitrate allowed for output. Defaults to 0");
+	("-t", Arg.Set delete_begin_ref,                        " Strip non-MP3 data at the beginning (mainly ID3v2 tags)");
+	("-s", Arg.Set delete_end_ref,                          " Strip non-MP3 data at the end (mainly tags)");
+	("-z", Arg.Set recompress_ref,                          " Recompress frames to find optimal settings (takes time)");
+	("-a", Arg.Set_string append_ref,               "\"-vbr\" Changes the string to append to the filename in certain cases");
+	("-A", Arg.Set do_files_with_appended_string_ref,       " Don't skip files in directory which already have the -a string");
+	("-u", Arg.Set rename_input_ref,                        " Updates the input file and renames the orig to the output name");
+	("-w", Arg.Set zero_whole_bad_frame_ref,                " Skips frames on buffer error. Otherwise skips granules");
 	("-r", Arg.Unit (fun () -> minimize_bit_reservoir_option_ref := Some true),  " Minimizes bit reservoir all the time");
 	("-R", Arg.Unit (fun () -> minimize_bit_reservoir_option_ref := Some false), " Maximizes bit reservoir all the time");
-	("--keep-ok", Arg.String keep_ok_parse,           "\"x\" What files to keep when no errors occur. x = (out | both)");
-	("--keep-bad", Arg.String keep_notok_parse,       "\"x\" What files to keep when errors occur. x = (in | out | both)");
-	("-f", Arg.Set force_overwrite_ref,                    " Force overwriting of output files");
-	("-i", Arg.Set only_info_ref,                          " Print info and exit (no processing)");
-	("--ib", Arg.Set only_info_bitrate_ref,                " Print only the min CBR bitrate (similar to -i)");
-	("--nice",  Arg.Set_int niceness_ref,                "10 Priority of the encoding. 0 = normal, 19 = idle");
-	("--debug", Arg.String debug_parse,               "\"x\" Print a bunch of garbage while processing. x = (in | out | all)");
-	("--worker", Arg.Set worker_ref,                       " Internal use only -- do not use")
+	("--keep-ok", Arg.String keep_ok_parse,             "both What files to keep when no errors occur. [out|both]");
+	("--keep-bad", Arg.String keep_notok_parse,         "both What files to keep when errors occur. [in|out|both]");
+	("--copy-time", Arg.Set copy_time_ref,                  " Preserve the original files' creation/modification times");
+	("-f", Arg.Set force_overwrite_ref,                     " Force overwriting of output files");
+	("--process", Arg.String process_parse,Printf.sprintf "%s Which instruction set to use with -z [base|sse41]" (if sse41_ok then "sse41" else "base"));
+	("-i", Arg.Set only_info_ref,                           " Print info and exit (no processing)");
+	("--ib", Arg.Set only_info_bitrate_ref,                 " Print only the min CBR bitrate (similar to -i)");
+	("--nice",  Arg.Set_int niceness_ref,                 "10 Priority of the encoding. 0 = normal, 19 = idle");
+	("--debug", Arg.String debug_parse,                 "none Print a bunch of garbage while processing. [in|out|huff|all]");
+	("--worker", Arg.Int (fun x -> worker_ref := Some x),  "_ Internal use only -- do not use")
 ];;
 
 
@@ -175,7 +201,6 @@ with
 
 (* Set the priority *)
 ignore (Mp3types.nice !niceness_ref);;
-
 
 (*
 	This will minimize the bitrate reservoir when a minimum bitrate is specified,
@@ -230,7 +255,7 @@ let print_errors = function
 
 
 let queue_state = {
-	q_silent = !worker_ref;
+	q_silent = (!worker_ref <> None);
 	q_debug_in = !debug_in_ref;
 	q_debug_queue = !debug_out_ref;
 	q_debug_recompress = !debug_recompress_ref;
@@ -239,6 +264,7 @@ let queue_state = {
 	q_delete_end_junk = !delete_end_ref;
 	q_padding = padding;
 	q_recompress = !recompress_ref;
+	q_process_set = !process_set_ref;
 	q_zero_whole_bad_frame = !zero_whole_bad_frame_ref;
 	q_minimize_bit_reservoir = minimize_bit_reservoir;
 };;
@@ -252,28 +278,30 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 		let t1 = Unix.gettimeofday () in
 		(try
 			let errors = do_info ~only_bitrate:!only_info_bitrate_ref ~debug_in:(!debug_in_ref) ~debug_info:(!debug_out_ref) a in
-			print_errors errors;
+			if not !only_info_bitrate_ref then (
+				print_errors errors;
+			);
 		with
 			_ -> ()
 		);
 		let t2 = Unix.gettimeofday () in
-		Printf.printf "That took %f seconds\n" (t2 -. t1);
+(*		Printf.printf "That took %f seconds\n" (t2 -. t1);*)
 		()
 (*		errors*)
 	)
-(*
-) else if !worker_ref then (
+) else match !worker_ref with
+| Some worker_num -> (
 	(* This is being run by another mp3packer; make sure everything is silent *)
 	(* rename_input_ref should NOT be used with this since Linux will just overwrite the other file *)
-*)
-) else if !rename_input_ref then (
+	Multiproc.worker worker_num !process_set_ref true
+)
+| _ when !rename_input_ref -> (
 	(* Rename the input file, and do_queue backwards to update the original filename *)
 	fun a b -> (
-		Printf.printf "REMOVING %S IF NEEDED\n" b;
 		if Unicode.file_exists_utf8 b then Unicode.remove_utf8 b;
 		ignore @@ Unicode.rename_utf8 a b;
 		let r_obj = new Mp3read.mp3read_ptr ~debug:queue_state.q_debug_in b in
-		let w_obj = new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] a in
+		let w_obj = new Mp3write.mp3write_unix_ptrref_buf ~flags:[Unix.O_TRUNC] a in
 		let errors = (try
 			do_queue queue_state (*new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in b*)r_obj w_obj
 		with
@@ -284,6 +312,11 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 				Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1,0)
 			)
 		) in
+
+		(* Maybe I should add some sort of warning if this fails? *)
+		if !copy_time_ref then (
+			ignore @@ copy_file_times_by_name b a
+		);
 
 		(match (errors, !keep_ok_ref, !keep_notok_ref) with
 			| ((0,0,0), Keep_ok_output, _) -> (Printf.printf "Repacking successful; deleting backup\n"; Unicode.remove_utf8 b)
@@ -296,11 +329,12 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 		()
 (*		errors*)
 	)
-) else (
+)
+| _ -> (
 	(* Regular *)
 	fun a b -> (
 		let r_obj = new Mp3read.mp3read_ptr ~debug:queue_state.q_debug_in a in
-		let w_obj = new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] b in
+		let w_obj = new Mp3write.mp3write_unix_ptrref_buf ~flags:[Unix.O_TRUNC] b in
 		let errors = (try
 			do_queue queue_state (*new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in a*)r_obj w_obj
 		with
@@ -311,6 +345,10 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 			)
 		) in
 
+		if !copy_time_ref then (
+			ignore @@ copy_file_times_by_name a b
+		);
+
 		(match (errors, !keep_ok_ref, !keep_notok_ref) with
 			| ((0,0,0), Keep_ok_output, _) -> (Printf.printf "Repacking successful; deleting input file\n"; Unicode.remove_utf8 a)
 			| (_, _, Keep_notok_output) -> (Printf.printf "Repacking not successful, but deleting input anyway\n"; Unicode.remove_utf8 a)
@@ -319,6 +357,7 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 		);
 
 		print_errors errors;
+
 
 		()
 	)
