@@ -27,7 +27,7 @@ open Types;;
 
 
 
-let version = "2.03-263";;
+let version = "2.04-268";;
 
 let padding = Printf.sprintf "mp3packer%s\n" version;;
 
@@ -224,9 +224,10 @@ let print_errors = function
 ;;
 
 
-let recompress_fun (state, file_state, frame_to_compress) =
+let recompress_fun (state, file_state, F1_ext frame_to_compress) =
 	try
-		Normal (Mp3frameutils.recompress_frame state (file_state : Types.file_state) frame_to_compress)
+		let (a,b) = Mp3frameutils.recompress_frame state (file_state : Types.file_state) frame_to_compress in
+		Normal (F1_ext a, b)
 	with
 		e -> Error e
 ;;
@@ -275,7 +276,7 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 		if Unicode.file_exists_utf8 b then Unicode.remove_utf8 b;
 		ignore @@ Unicode.rename_utf8 a b;
 		let file_state = new file_state in
-		let r_obj = new Mp3read.mp3read_ptr queue_state.q_print_in b in
+		let r_obj = new Mp3read.mp3read_ptr_2 queue_state.q_print_in b in
 		let w_obj = new Mp3write.mp3write_unix_ptrref_buf ~flags:[Unix.O_TRUNC] a in
 		(try
 			do_queue recompress_obj queue_state file_state (*new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in b*)r_obj w_obj
@@ -311,7 +312,7 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 	(* Regular *)
 	fun a b -> (
 		let file_state = new file_state in
-		let r_obj = new Mp3read.mp3read_ptr queue_state.q_print_in a in
+		let r_obj = new Mp3read.mp3read_ptr_2 queue_state.q_print_in a in
 		let w_obj = new Mp3write.mp3write_unix_ptrref_buf ~flags:[Unix.O_TRUNC] b in
 		(try
 			do_queue recompress_obj queue_state file_state (*new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in a*)r_obj w_obj

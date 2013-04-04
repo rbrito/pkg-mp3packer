@@ -24,7 +24,7 @@ let (+=) a b = (a := !a + b);;
 
 let do_info ?(only_bitrate=false) p ?(debug_info=false) in_name =
 (*	let t1 = Sys.time () in*)
-	let in_obj = new mp3read_unix p in_name in
+	let in_obj = new mp3read_ptr_2 p in_name in
 (*	let in_obj = new mp3read_ptr ~debug:debug_in in_name in*)
 	
 (*
@@ -37,36 +37,34 @@ let do_info ?(only_bitrate=false) p ?(debug_info=false) in_name =
 *)
 
 	(* NEW 20070401 *)
-	let (new_req, first_real_frame, (first_wanted_at, first_got_at), in_xing_option) = (
+	let (new_req, IF_ext first_real_frame, (first_wanted_at, first_got_at), in_xing_option) = (
 		let before_lame_reqs = {
-			req_id           = Req_equal;
-			req_crc          = Req_any;
-			req_bitrate      = Req_any;
-			req_samplerate   = Req_equal;
-			req_padding      = Req_any;
-			req_private      = Req_any;
-			req_channel_mode = Req_any;
-			req_ms           = Req_any;
-			req_is           = Req_any;
-			req_copyright    = Req_any;
-			req_original     = Req_any;
-			req_emphasis     = Req_any;
+			req_id            = Req_equal;
+			req_crc           = Req_any;
+			req_bitrate       = Req_any;
+			req_samplerate    = Req_equal;
+			req_padding       = Req_any;
+			req_private       = Req_any;
+			req_channel_mode  = Req_any;
+			req_channel_count = Req_any;
+			req_copyright     = Req_any;
+			req_original      = Req_any;
+			req_emphasis      = Req_any;
 		} in
 		let after_lame_reqs = {
-			req_id           = Req_equal;
-			req_crc          = Req_equal;
-			req_bitrate      = Req_any;
-			req_samplerate   = Req_equal;
-			req_padding      = Req_any;
-			req_private      = Req_any;
-			req_channel_mode = Req_equal;
-			req_ms           = Req_any;   (* MS and IS can change if channel_mode is JS, and are ignored otherwise *)
-			req_is           = Req_any;
-			req_copyright    = Req_equal; (* It would seem silly to have only parts of a song copyrighted *)
-			req_original     = Req_equal; (* Ditto with original *)
-			req_emphasis     = Req_equal; (* And emphasis... *)
+			req_id            = Req_equal;
+			req_crc           = Req_equal;
+			req_bitrate       = Req_any;
+			req_samplerate    = Req_equal;
+			req_padding       = Req_any;
+			req_private       = Req_any;
+			req_channel_mode  = Req_any;
+			req_channel_count = Req_equal;
+			req_copyright     = Req_equal; (* It would seem silly to have only parts of a song copyrighted *)
+			req_original      = Req_equal; (* Ditto with original *)
+			req_emphasis      = Req_equal; (* And emphasis... *)
 		} in
-		let (_(*first_req*), first_frame, (_ (* 0 *), first_got)) = in_obj#find_next_frame ~force_resync:true ~lame_search:true before_lame_reqs in
+		let (_(*first_req*), IF_ext first_frame, (_ (* 0 *), first_got)) = in_obj#find_next_frame ~force_resync:true ~lame_search:true before_lame_reqs in
 		match first_frame.if_xing with
 		| None -> (
 			(* The first frame was NOT an XING frame; restart and use more strict after_lame_reqs *)
@@ -99,7 +97,7 @@ let do_info ?(only_bitrate=false) p ?(debug_info=false) in_name =
 	let total_data_bytes_ref = ref 0 in
 	let most_bits_per_frame_ref = ref 0 in
 	let frame_inky_ref = ref 0 in
-	let frame_ref = ref first_real_frame in
+	let frame_ref = ref (IF_ext first_real_frame) in
 	let frame_sync_error_ref = ref (first_wanted_at <> first_got_at) in
 	let sync_errors_ref = ref 0 in
 	let crc_errors_ref = ref 0 in
@@ -108,23 +106,30 @@ let do_info ?(only_bitrate=false) p ?(debug_info=false) in_name =
 	let file_length = in_obj#length in
 	(try (
 		while true do
+			let IF_ext f = !frame_ref in
 			if !frame_sync_error_ref then incr sync_errors_ref;
-			if not !frame_ref.if_crc_ok then incr crc_errors_ref;
+			if not f.if_crc_ok then incr crc_errors_ref;
 			if not only_bitrate && in_obj#pos > !next_update_ref then (
 				Printf.printf "\r%2d%% done on frame %d" !next_update_percent_ref !frame_inky_ref;
 				flush stdout;
 				next_update_percent_ref += 1;
 				next_update_ref := int_of_float (float_of_int file_length *. float_of_int !next_update_percent_ref *. 0.01);
 			);
-			let side = side_info_of_if !frame_ref in
-			let side_data_bits = Array.fold_left (+) 0 side.side_bits in
-			total_frame_size_ref += frame_length_of_header !frame_ref.if_header; (*!frame_ref.frameHeader.headerFrameLength;*)
+			let side = side_info_of_if_2 f in
+			let get_side_data_bits : type id chan. (id,chan) side_t -> int = function
+				| {side_bits = Bits_1_mono (a,b)} -> a + b
+				| {side_bits = Bits_1_stereo (a,b,c,d)} -> a + b + c + d
+				| {side_bits = Bits_2_mono a} -> a
+				| {side_bits = Bits_2_stereo (a,b)} -> a + b
+			in
+			let side_data_bits = get_side_data_bits side in
+			total_frame_size_ref += f.if_header.header_bitrate.bitrate_size; (*!frame_ref.frameHeader.headerFrameLength;*)
 			total_data_bits_ref += side_data_bits; (*!frame_ref.frameSide.sideDataBits;*)
 			total_data_bytes_ref += side.side_bytes; (*(!frame_ref.frameSide.sideDataBits + 7) lsr 3;*)
 			Expandarray.add bQ side.side_bytes;
 (*Printf.printf " %d" side.side_bytes;*)
 			most_bits_per_frame_ref := max !most_bits_per_frame_ref side_data_bits;
-			let current = (!frame_ref.if_header.header_bitrate, !frame_ref.if_header.header_padding) in
+			let current = (f.if_header.header_bitrate.bitrate_num, f.if_header.header_padding) in
 			(match Hashtbl.mem bH current with
 				| false -> Hashtbl.add bH current (ref 1)
 				| true -> (Hashtbl.find bH current) += 1
@@ -149,8 +154,8 @@ let do_info ?(only_bitrate=false) p ?(debug_info=false) in_name =
 				p "INFO:                                           "; (* A bunch of spaces to clear the percentage-done indicator *)
 				p " %s layer 3" (match first_real_frame.if_header.header_id with
 					| MPEG1 -> "MPEG1"
-					| MPEG2 -> "MPEG2"
-					|   _   -> "MPEG2.5"
+					| MPEG2 MPEG20 -> "MPEG2"
+					| MPEG2 MPEG25 -> "MPEG2.5"
 				);
 				p " %d frames" (!frame_inky_ref + 1);
 				p " %d Hz" (int_of_samplerate first_real_frame.if_header.header_samplerate);
@@ -179,7 +184,7 @@ let do_info ?(only_bitrate=false) p ?(debug_info=false) in_name =
 					if unpadded <> 0 || padded <> 0 then (
 						p "  %3d: %d,%d" br unpadded padded
 					);
-				) (bitrate_index_of_id first_real_frame.if_header.header_id);
+				) (bitrate_array_of_id first_real_frame.if_header.header_id);
 			
 				p " Largest frame uses %d bits = %d bytes = %f kbps" !most_bits_per_frame_ref ((!most_bits_per_frame_ref + 7) lsr 3) (float_of_int !most_bits_per_frame_ref *. 0.125 /. bspfk);
 			); (* If not only_bitrate *)
@@ -251,7 +256,7 @@ let do_info ?(only_bitrate=false) p ?(debug_info=false) in_name =
 			) in
 
 			let check_bitrate br_index = (
-				let br_num = (bitrate_index_of_id first_real_frame.if_header.header_id).(br_index) in
+				let br_num = (bitrate_array_of_id first_real_frame.if_header.header_id).(br_index) in
 				let res_ref = ref 0 in
 				let br_unpadded_bytes = unpadded_frame_length first_real_frame.if_header.header_samplerate br_num - 4 - Ptr.Ref.length first_real_frame.if_side_raw in
 				let br_padded_bytes = br_unpadded_bytes + 1 in
@@ -275,12 +280,12 @@ let do_info ?(only_bitrate=false) p ?(debug_info=false) in_name =
 
 			let rec check_bitrate_rec now last = (
 				if now > last then (
-					(bitrate_index_of_id first_real_frame.if_header.header_id).(14)
+					(bitrate_array_of_id first_real_frame.if_header.header_id).(14)
 				) else (
 					match (check_bitrate now, now = last) with
 					| (false, false) -> check_bitrate_rec (now + 1) last
-					| (false, true) -> (bitrate_index_of_id first_real_frame.if_header.header_id).(14)
-					| (true, _) -> (bitrate_index_of_id first_real_frame.if_header.header_id).(now)
+					| (false, true) -> (bitrate_array_of_id first_real_frame.if_header.header_id).(14)
+					| (true, _) -> (bitrate_array_of_id first_real_frame.if_header.header_id).(now)
 				)
 			) in
 (*

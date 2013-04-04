@@ -55,6 +55,7 @@ let num_quants = 576;;
 (*
 	The lowest frequency sample of each scalefactor band is given in this table
 *)
+(*
 let global_scalefactors sfreq is_short = match (sfreq, is_short) with
 	| (S48000, false) -> [| 0; 4; 8;12;16;20;24;30; 36; 42; 50; 60; 72; 88;106;128;156;190;230;276;330;384;576 |]
 	| (S44100, false) -> [| 0; 4; 8;12;16;20;24;30; 36; 44; 52; 62; 74; 90;110;134;162;196;238;288;342;418;576 |]
@@ -122,6 +123,77 @@ let global_scalefactors_ptr =
 	| (S11025, true ) -> short11025
 	| ( S8000, true ) -> short8000
 ;;
+*)
+let global_scalefactors : type id. id samplerate_t -> bool -> int array = fun s_freq is_short -> match (s_freq, is_short) with
+	| (S48000, false) -> [| 0; 4; 8;12;16;20;24;30; 36; 42; 50; 60; 72; 88;106;128;156;190;230;276;330;384;576 |]
+	| (S44100, false) -> [| 0; 4; 8;12;16;20;24;30; 36; 44; 52; 62; 74; 90;110;134;162;196;238;288;342;418;576 |]
+	| (S32000, false) -> [| 0; 4; 8;12;16;20;24;30; 36; 44; 54; 66; 82;102;126;156;194;240;296;364;448;550;576 |]
+	| (S24000, false) -> [| 0; 6;12;18;24;30;36;44; 54; 66; 80; 96;114;136;162;194;232;278;332;394;464;540;576 |]
+	| (S22050, false) -> [| 0; 6;12;18;24;30;36;44; 54; 66; 80; 96;116;140;168;200;238;284;336;396;464;522;576 |]
+	| (S16000, false) -> [| 0; 6;12;18;24;30;36;44; 54; 66; 80; 96;116;140;168;200;238;284;336;396;464;522;576 |]
+	| (S12000, false) -> [| 0; 6;12;18;24;30;36;44; 54; 66; 80; 96;116;140;168;200;238;284;336;396;464;522;576 |]
+	| (S11025, false) -> [| 0; 6;12;18;24;30;36;44; 54; 66; 80; 96;116;140;168;200;238;284;336;396;464;522;576 |]
+	| ( S8000, false) -> [| 0;12;24;36;48;60;72;88;108;132;160;192;232;280;336;400;476;566;568;570;572;574;576 |]
+
+	| (S48000, true ) -> [| 0;4; 8;12;16;22;28;38; 50; 64; 80;100;126;192 |]
+	| (S44100, true ) -> [| 0;4; 8;12;16;22;30;40; 52; 66; 84;106;136;192 |]
+	| (S32000, true ) -> [| 0;4; 8;12;16;22;30;42; 58; 78;104;138;180;192 |]
+	| (S24000, true ) -> [| 0;4; 8;12;18;26;36;48; 62; 80;104;136;180;192 |]
+	| (S22050, true ) -> [| 0;4; 8;12;18;24;32;42; 56; 74;100;132;174;192 |]
+	| (S16000, true ) -> [| 0;4; 8;12;18;26;36;48; 62; 80;104;134;174;192 |]
+	| (S12000, true ) -> [| 0;4; 8;12;18;26;36;48; 62; 80;104;134;174;192 |]
+	| (S11025, true ) -> [| 0;4; 8;12;18;26;36;48; 62; 80;104;134;174;192 |]
+	| ( S8000, true ) -> [| 0;8;16;24;36;52;72;96;124;160;162;164;166;192 |]
+;;
+
+(* NOTE: for some reason I can't add these before a closure in the function, so I have to pollute the module's namespace *)
+let gsf_get_this : type id. id samplerate_t -> _ = fun a b ->
+	let copy_array = global_scalefactors a b in
+	let ptr = Ptr.make (2 * Array.length copy_array) 0 in
+	Array.iteri (fun i q -> Ptr.put_16_of_int ptr (2 * i) q) copy_array;
+	ptr
+;;
+let gsf_long48000  = gsf_get_this S48000 false;;
+let gsf_long44100  = gsf_get_this S44100 false;;
+let gsf_long32000  = gsf_get_this S32000 false;;
+let gsf_long24000  = gsf_get_this S24000 false;;
+let gsf_long22050  = gsf_get_this S22050 false;;
+let gsf_long16000  = gsf_get_this S16000 false;;
+let gsf_long12000  = gsf_get_this S12000 false;;
+let gsf_long11025  = gsf_get_this S11025 false;;
+let gsf_long8000   = gsf_get_this S8000  false;;
+let gsf_short48000 = gsf_get_this S48000 true;;
+let gsf_short44100 = gsf_get_this S44100 true;;
+let gsf_short32000 = gsf_get_this S32000 true;;
+let gsf_short24000 = gsf_get_this S24000 true;;
+let gsf_short22050 = gsf_get_this S22050 true;;
+let gsf_short16000 = gsf_get_this S16000 true;;
+let gsf_short12000 = gsf_get_this S12000 true;;
+let gsf_short11025 = gsf_get_this S11025 true;;
+let gsf_short8000  = gsf_get_this S8000  true;;
+let global_scalefactors_ptr : type id. id samplerate_t -> bool -> Ptr.t = fun a b ->
+	match (a,b) with
+	| (S48000, false) -> gsf_long48000
+	| (S44100, false) -> gsf_long44100
+	| (S32000, false) -> gsf_long32000
+	| (S24000, false) -> gsf_long24000
+	| (S22050, false) -> gsf_long22050
+	| (S16000, false) -> gsf_long16000
+	| (S12000, false) -> gsf_long12000
+	| (S11025, false) -> gsf_long11025
+	| (S8000 , false) -> gsf_long8000
+	| (S48000, true ) -> gsf_short48000
+	| (S44100, true ) -> gsf_short44100
+	| (S32000, true ) -> gsf_short32000
+	| (S24000, true ) -> gsf_short24000
+	| (S22050, true ) -> gsf_short22050
+	| (S16000, true ) -> gsf_short16000
+	| (S12000, true ) -> gsf_short12000
+	| (S11025, true ) -> gsf_short11025
+	| (S8000 , true ) -> gsf_short8000
+;;
+
+
 
 type block_type_t = Block_type_long | Block_type_short | Block_type_start | Block_type_stop;;
 
@@ -163,11 +235,34 @@ type side_gc_t = {
 	gc_count1_table_1 : bool;    (* true if table 1 is used for the Count1 region, false if 0 *)
 }
 
-type side_internal_t = {
+type (_,_) side_gc_selector_t =
+	| GC_1_mono : side_gc_t * side_gc_t -> (mpeg1_t, channel_mono_t) side_gc_selector_t
+	| GC_1_stereo : side_gc_t * side_gc_t * side_gc_t * side_gc_t -> (mpeg1_t, channel_stereo_t) side_gc_selector_t
+	| GC_2_mono : side_gc_t -> (_ mpeg2_t, channel_mono_t) side_gc_selector_t
+	| GC_2_stereo : side_gc_t * side_gc_t -> (_ mpeg2_t, channel_stereo_t) side_gc_selector_t
+;;
+
+type (_,_) side_scfi_t =
+	| SCFI_none : (_ mpeg2_t, _) side_scfi_t
+	| SCFI_mono : (bool * bool * bool * bool) -> (mpeg1_t, channel_mono_t) side_scfi_t
+	| SCFI_stereo : (bool * bool * bool * bool) * (bool * bool * bool * bool) -> (mpeg1_t, channel_stereo_t) side_scfi_t
+;;
+let no_scfi = (false,false,false,false);;
+let print_scfi (a,b,c,d) p =
+	p (Char '(');
+	p (Char (if a then '#' else '.'));
+	p (Char (if b then '#' else '.'));
+	p (Char (if c then '#' else '.'));
+	p (Char (if d then '#' else '.'));
+	p (Char ')');
+;;
+
+type ('id,'chan) side_internal_t = {
 	side_main_data_begin : int;
-	side_scfi : bool array array; (* side_scfi.(channel).(scfi band) 0 = Scale factors are transmitted for each granule. 1 = One scalefactor is for both granules. Note that there are 4 scale factor bands. *)
-	side_gc : side_gc_t array array; (* side_gc.(granule).(channel) *)
+	side_scfi : ('id,'chan) side_scfi_t; (* side_scfi.(channel).(scfi band) 0 = Scale factors are transmitted for each granule. 1 = One scalefactor is for both granules. Note that there are 4 scale factor bands. *)
+	side_gc : ('id,'chan) side_gc_selector_t; (* (gr0ch0, gr0ch1, gr1ch0, gr1ch1) *)
 };;
+type side_internal_ext_t = Side_int_ext : ('id,'chan) side_internal_t -> side_internal_ext_t;;
 
 (*
 	The number of bits to use in the (low,high) frequencies of the scalefactors.
@@ -264,36 +359,61 @@ let scalefactor_bands_m2 is gc =
 (* Frame internal types *)
 (************************)
 
-type m1_frame_data_t = {
-	m1_header : header_t; (* Do I need this? *)
-	m1_side_info : side_internal_t;
-	m1_scalefactors : int array array array; (* m1_scalefactors.(granule).(channel).(scalefactor) *)
+type _ m1_scalefactors_t =
+	| M1_scalefactors_mono : int array * int array -> channel_mono_t m1_scalefactors_t
+	| M1_scalefactors_stereo : int array * int array * int array * int array -> channel_stereo_t m1_scalefactors_t
+;;
+type _ m1_quantizers_t =
+	| M1_quantizers_mono : Ptr.t * Ptr.t -> channel_mono_t m1_quantizers_t
+	| M1_quantizers_stereo : Ptr.t * Ptr.t * Ptr.t * Ptr.t -> channel_stereo_t m1_quantizers_t
+;;
+type 'chan m1_frame_data_t = {
+	m1_header : (mpeg1_t, 'chan) header_t; (* Do I need this? *)
+	m1_side_info : (mpeg1_t, 'chan) side_internal_t;
+	m1_scalefactors : 'chan m1_scalefactors_t; (* m1_scalefactors.(granule).(channel).(scalefactor) *)
 (*	m1_quantizers : int array array array; (* m1_quantizers.(granule).(channel).(quantizer) *)*)
-	m1_quantizer_ptrs : Ptr.t array array; (* Ptr.t = int16 array *)
-	m1_starting_f1 : f1_t;
+	m1_quantizer_ptrs : 'chan m1_quantizers_t; (* Ptr.t = int16 array *)
+	m1_starting_f1 : (mpeg1_t, 'chan) f1_t;
 };;
 
-type m2_frame_data_t = {
-	m2_header : header_t;
-	m2_side_info : side_internal_t;
-	m2_scalefactors : int array array; (* m2_scalefactors.(channel).(scalefactor) *)
+type _ m2_scalefactors_t =
+	| M2_scalefactors_mono : int array -> channel_mono_t m2_scalefactors_t
+	| M2_scalefactors_stereo : int array * int array -> channel_stereo_t m2_scalefactors_t
+;;
+type _ m2_quantizers_t =
+	| M2_quantizers_mono : Ptr.t -> channel_mono_t m2_quantizers_t
+	| M2_quantizers_stereo : Ptr.t * Ptr.t -> channel_stereo_t m2_quantizers_t
+;;
+type ('id2,'chan) m2_frame_data_t = {
+	m2_header : ('id2 mpeg2_t, 'chan) header_t;
+	m2_side_info : ('id2 mpeg2_t, 'chan) side_internal_t;
+	m2_scalefactors : 'chan m2_scalefactors_t; (* m2_scalefactors.(channel).(scalefactor) *)
 (*	m2_quantizers : int array array; (* m2_quantizers.(channel).(quantizer) *)*)
-	m2_quantizer_ptrs : Ptr.t array;
-	m2_starting_f1 : f1_t;
+	m2_quantizer_ptrs : 'chan m2_quantizers_t;
+	m2_starting_f1 : ('id2 mpeg2_t, 'chan) f1_t;
 };;
 
-type frame_data_t = M1_frame_data of m1_frame_data_t | M2_frame_data of m2_frame_data_t;; (* MPEG 1 or 2 *)
+type (_,_) frame_data_t =
+	| M1_frame_data : 'chan m1_frame_data_t -> (mpeg1_t, 'chan) frame_data_t
+	| M2_frame_data : ('id2,'chan) m2_frame_data_t -> ('id2 mpeg2_t, 'chan) frame_data_t
+;;
 
 
 
 (*let print_side pin spaces s = ();;*)
 
-let print_side pin spaces s =
+let print_side : type id chan. (Types.p_type list -> unit) -> int -> (id,chan) side_internal_t -> unit = fun pin spaces s ->
 	let p x = pin (Spaces spaces :: x) in
 
 	p [Str "Main data begin: "; Int s.side_main_data_begin];
 	p [Fun (fun print ->
 		print (Str "SCFI each granule:");
+(*		print (Str "(later)");*)
+		match s.side_scfi with
+		| SCFI_none -> print (Str " none (MPEG2)")
+		| SCFI_mono scfi -> (print (Char ' '); print_scfi scfi print)
+		| SCFI_stereo (scfi_ch0, scfi_ch1) -> (print (Char ' '); print_scfi scfi_ch0 print; print (Char ' '); print_scfi scfi_ch1 print)
+(*
 		Array.iter (fun gr ->
 			print (Str " (");
 			Array.iter (function
@@ -302,40 +422,45 @@ let print_side pin spaces s =
 			) gr;
 			print (Str ")");
 		) s.side_scfi;
+*)
 	)];
 	p [Str "Granule / channel info:"];
-	Array.iteri (fun i granule ->
-		p [Str " Granule "; Int i; Str ":"];
-		Array.iteri (fun j gc ->
-			p [Str "  Channel "; Int j; Str ":"];
-			p [Str "   Part2_3:     "; Int gc.gc_part2_3_length; Str " (offset "; Int gc.gc_part2_3_offset; Str ")"];
-			p [Str "   big_values:  "; Int gc.gc_big_values];
-			p [Str "   global_gain: "; Int gc.gc_global_gain];
-			p [Str "   scf_comp_i:  "; Int gc.gc_scf_compress_index];
-			(match gc.gc_window with
-				| Window_normal w -> (
-					p [Str "   Normal window"];
-					p [Str "    Tables:     "; Int w.normal_table_select1; Str ","; Int w.normal_table_select2; Str ","; Int w.normal_table_select3];
-					p [Str "    Region 0,1: "; Int w.normal_region_0_count; Str ","; Int w.normal_region_1_count];
-				)
-				| Window_other w -> (
-					p [Str "   Other window"];
-					p [Str "    Block type:     "; Str (match w.other_block_type with
-						| Block_type_long -> "INVALID!"
-						| Block_type_short -> "Short"
-						| Block_type_start -> "Start"
-						| Block_type_stop -> "Stop"
-					)];
-					p [Str "    Mixed block?    "; Bool w.other_mixed_block];
-					p [Str "    Tables:         "; Int w.other_table_select1; Str ","; Int w.other_table_select2];
-					p [Str "    Sub block gain: "; Int w.other_sub_block_gain1; Str ","; Int w.other_sub_block_gain2; Str ","; Int w.other_sub_block_gain3];
-				)
-			);
-			p [Str "   HF amp:      "; Bool gc.gc_pre_flag];
-			p [Str "   SF scale:    "; Int gc.gc_sf_scale];
-			p [Str "   Count1 table "; Int (if gc.gc_count1_table_1 then 1 else 0)];
-		) granule
-	) s.side_gc
+	let pgrch gr ch gc =
+		p [Str " Granule "; Int gr; Str ":"];
+		p [Str "  Channel "; Int ch; Str ":"];
+		p [Str "   Part2_3:     "; Int gc.gc_part2_3_length; Str " (offset "; Int gc.gc_part2_3_offset; Str ")"];
+		p [Str "   big_values:  "; Int gc.gc_big_values];
+		p [Str "   global_gain: "; Int gc.gc_global_gain];
+		p [Str "   scf_comp_i:  "; Int gc.gc_scf_compress_index];
+		(match gc.gc_window with
+			| Window_normal w -> (
+				p [Str "   Normal window"];
+				p [Str "    Tables:     "; Int w.normal_table_select1; Str ","; Int w.normal_table_select2; Str ","; Int w.normal_table_select3];
+				p [Str "    Region 0,1: "; Int w.normal_region_0_count; Str ","; Int w.normal_region_1_count];
+			)
+			| Window_other w -> (
+				p [Str "   Other window"];
+				p [Str "    Block type:     "; Str (match w.other_block_type with
+					| Block_type_long -> "INVALID!"
+					| Block_type_short -> "Short"
+					| Block_type_start -> "Start"
+					| Block_type_stop -> "Stop"
+				)];
+				p [Str "    Mixed block?    "; Bool w.other_mixed_block];
+				p [Str "    Tables:         "; Int w.other_table_select1; Str ","; Int w.other_table_select2];
+				p [Str "    Sub block gain: "; Int w.other_sub_block_gain1; Str ","; Int w.other_sub_block_gain2; Str ","; Int w.other_sub_block_gain3];
+			)
+		);
+		p [Str "   HF amp:      "; Bool gc.gc_pre_flag];
+		p [Str "   SF scale:    "; Int gc.gc_sf_scale];
+		p [Str "   Count1 table "; Int (if gc.gc_count1_table_1 then 1 else 0)];
+	in
+
+	match s.side_gc with
+	| GC_1_mono (a,b) -> (pgrch 0 0 a; pgrch 1 0 b)
+	| GC_1_stereo (a,b,c,d) -> (pgrch 0 0 a; pgrch 0 1 b; pgrch 1 0 c; pgrch 1 1 d)
+	| GC_2_mono (a) -> (pgrch 0 0 a)
+	| GC_2_stereo (a,b) -> (pgrch 0 0 a; pgrch 0 1 b)
 ;;
 
 
@@ -438,7 +563,7 @@ Side info:
 (* READ QUANTIZERS *)
 (*******************)
 (* It ends when r_at = r_to *)
-let read_quantizers state file_state k gc in_ptr r_at r_to =
+let read_quantizers state file_state k gc in_ptr r_at r_to = 
 	let p = state.q_print_recompress in
 	let s = Ptr.Ref.new_seq (Ptr.Ref.of_ptr in_ptr) in
 	Ptr.Ref.set_seq s r_at;
@@ -535,11 +660,12 @@ let read_quantizers state file_state k gc in_ptr r_at r_to =
 (*********************)
 (* READ SCALEFACTORS *)
 (*********************)
-let read_scalefactors_m1 state scfi prev_scf_option gc s   file_state k in_ptr =
+let read_scalefactors_m1 state scfi_tuple prev_scf_option gc s   file_state k in_ptr =
+	let (scfia,scfib,scfic,scfid) = scfi_tuple in
 	let p = state.q_print_recompress in
-	let make_initial_array = match (prev_scf_option, scfi) with
+	let make_initial_array = match (prev_scf_option, scfi_tuple) with
 		| (None, _) -> (fun x -> Array.make x 0)
-		| (Some _, [| false;false;false;false |]) -> (fun x -> Array.make x 0) (* If scfi indicates to not use anything from previous frame, just recreate the array. This helps for short blocks, when the array is the wrong length anyway *)
+		| (Some _, (false,false,false,false)) -> (fun x -> Array.make x 0) (* If scfi indicates to not use anything from previous frame, just recreate the array. This helps for short blocks, when the array is the wrong length anyway *)
 		| (Some y, _) -> (fun x -> Array.sub y 0 x)
 	in
 	let (bits1,bits2) = scalefactor_compress_m1.(gc.gc_scf_compress_index) in
@@ -571,16 +697,16 @@ let read_scalefactors_m1 state scfi prev_scf_option gc s   file_state k in_ptr =
 		if i >= Array.length scf_out then (
 			p [Str "!"];
 		) else if i < 6 then (
-			if not scfi.(0) then (scf_out.(i) <- get_seq s num_bits; p [Str "0: "; Int scf_out.(i)]);
+			if not scfia then (scf_out.(i) <- get_seq s num_bits; p [Str "0: "; Int scf_out.(i)]);
 			read_stuff (succ i)
 		) else if i < 11 then (
-			if not scfi.(1) then (scf_out.(i) <- get_seq s num_bits; p [Str "1: "; Int scf_out.(i)]);
+			if not scfib then (scf_out.(i) <- get_seq s num_bits; p [Str "1: "; Int scf_out.(i)]);
 			read_stuff (succ i)
 		) else if i < 16 then (
-			if not scfi.(2) then (scf_out.(i) <- get_seq s num_bits; p [Str "2: "; Int scf_out.(i)]);
+			if not scfic then (scf_out.(i) <- get_seq s num_bits; p [Str "2: "; Int scf_out.(i)]);
 			read_stuff (succ i)
 		) else if i < 21 then (
-			if not scfi.(3) then (scf_out.(i) <- get_seq s num_bits; p [Str "3: "; Int scf_out.(i)]);
+			if not scfid then (scf_out.(i) <- get_seq s num_bits; p [Str "3: "; Int scf_out.(i)]);
 			read_stuff (succ i)
 		) else (
 			scf_out.(i) <- get_seq s num_bits; p [Str "+: "; Int scf_out.(i)];
@@ -597,7 +723,8 @@ let read_scalefactors_m1 state scfi prev_scf_option gc s   file_state k in_ptr =
 		Str "    READ_SCALEFACTORS_M1: ("; Int bits1; Str ","; Int bits2; Str ")="; Int num1; Str ","; Int num2; Str " - [";
 		Fun (fun print -> Array.iter (fun n -> print (Str " "); print (Int n)) scf_out);
 		Str " ] ";
-		Fun (fun print -> Array.iter (fun n -> print (Str (if n then "#" else "."))) scfi)
+(*		Fun (fun print -> Array.iter (fun n -> print (Str (if n then "#" else "."))) scfi)*)
+		Fun (print_scfi scfi_tuple)
 	]; (*tabs bits1 bits2 num1 num2 (Array.fold_left (fun so_far gnu -> so_far ^ " " ^ (string_of_int gnu)) "" scf_out);*)
 (*	if debug then Array.iter (fun q -> Printf.printf "%s" (if q then "#" else ".")) scfi;*)
 (*	if debug then Printf.printf "\n";*)
@@ -709,15 +836,15 @@ let rehuff_granule state (quant_ptr : Ptr.t) (*process_function*) gc (scf_bands_
 
 		let (s_l1,s_l2,s_big,(*s_count1num : int*)_,s_t1,s_t2,s_t3,p1t1) = (
 
-			let (s_l1,s_l2,s_big,s_count1num,s_t1,s_t2,s_t3,p1t1) = process_function
+			(*let (s_l1,s_l2,s_big,s_count1num,s_t1,s_t2,s_t3,p1t1) =*) process_function
 				quant_bits_ptr16
 				quant_bits_count1_char_ptr
 				scf_bands_ptr
 				quant_ptr
 				false (* Don't use the debug stuff yet *)
-			in
+			(*in
 
-			(s_l1,s_l2,s_big,s_count1num,s_t1,s_t2,s_t3,p1t1)
+			(s_l1,s_l2,s_big,s_count1num,s_t1,s_t2,s_t3,p1t1)*)
 		) in
 
 (*		let (s_l1,s_l2,s_big,s_t1,s_t2,s_t3,p1t1) = smallest_config in*)
@@ -738,346 +865,380 @@ let rehuff_granule state (quant_ptr : Ptr.t) (*process_function*) gc (scf_bands_
 (*********************************************************************************)
 (* DECODE FRAME DECODE FRAME DECODE FRAME DECODE FRAME DECODE FRAME DECODE FRAME *)
 (*********************************************************************************)
-let decode_frame state file_state f =
-	let p = state.q_print_recompress in
+let decode_side_info : type id chan. (id,chan) f1_t -> (id,chan) side_internal_t = fun f ->
 	let s = Ptr.Ref.new_seq f.f1_side.side_raw in
 	let gs = get_seq s in
-	let side_info = match f.f1_header.header_id with
-		| MPEG1 -> (
-
-			let read_gc part2_3_offset = (
-				let part2_3_length = gs 12 in
-				let big_values = gs 9 in
-				let global_gain = gs 8 in
-				let scf_compress = gs 4 in
-				let window_flag = gs 1 in
-				let window = if window_flag = 0 then (
-					let huff1 = gs 5 in
-					let huff2 = gs 5 in
-					let huff3 = gs 5 in
-					let r0 = gs 4 in
-					let r1 = gs 3 in
-					Window_normal {
-						normal_table_select1 = huff1;
-						normal_table_select2 = huff2;
-						normal_table_select3 = huff3;
-						normal_region_0_count = r0;
-						normal_region_1_count = r1;
-					}
-				) else (
-					let block_type_index = gs 2 in
-					let mixed_block = gs 1 in
-					let huff1 = gs 5 in
-					let huff2 = gs 5 in
-					let sb_gain1 = gs 3 in
-					let sb_gain2 = gs 3 in
-					let sb_gain3 = gs 3 in
-					Window_other {
-						other_block_type = [| Block_type_long; Block_type_start; Block_type_short; Block_type_stop |].(block_type_index);
-						other_mixed_block = (mixed_block = 1);
-						other_table_select1 = huff1;
-						other_table_select2 = huff2;
-						other_sub_block_gain1 = sb_gain1;
-						other_sub_block_gain2 = sb_gain2;
-						other_sub_block_gain3 = sb_gain3;
-					}
-				) in
-				let pre_flag = gs 1 in
-				let sf_scale = gs 1 in
-				let count1_table = gs 1 in
-				({
-					gc_part2_3_length = part2_3_length;
-					gc_part2_3_offset = part2_3_offset;
-					gc_big_values = big_values;
-					gc_global_gain = global_gain;
-					gc_scf_compress_index = scf_compress;
-					gc_window = window;
-					gc_pre_flag = (pre_flag = 1);
-					gc_sf_scale = sf_scale;
-					gc_count1_table_1 = (count1_table = 1);
-				}, part2_3_offset + part2_3_length)
+	match f.f1_header.header_id with
+	| MPEG1 -> (
+		let read_gc part2_3_offset = (
+			let part2_3_length = gs 12 in
+			let big_values = gs 9 in
+			let global_gain = gs 8 in
+			let scf_compress = gs 4 in
+			let window_flag = gs 1 in
+			let window = if window_flag = 0 then (
+				let huff1 = gs 5 in
+				let huff2 = gs 5 in
+				let huff3 = gs 5 in
+				let r0 = gs 4 in
+				let r1 = gs 3 in
+				Window_normal {
+					normal_table_select1 = huff1;
+					normal_table_select2 = huff2;
+					normal_table_select3 = huff3;
+					normal_region_0_count = r0;
+					normal_region_1_count = r1;
+				}
+			) else (
+				let block_type_index = gs 2 in
+				let mixed_block = gs 1 in
+				let huff1 = gs 5 in
+				let huff2 = gs 5 in
+				let sb_gain1 = gs 3 in
+				let sb_gain2 = gs 3 in
+				let sb_gain3 = gs 3 in
+				Window_other {
+					other_block_type = [| Block_type_long; Block_type_start; Block_type_short; Block_type_stop |].(block_type_index);
+					other_mixed_block = (mixed_block = 1);
+					other_table_select1 = huff1;
+					other_table_select2 = huff2;
+					other_sub_block_gain1 = sb_gain1;
+					other_sub_block_gain2 = sb_gain2;
+					other_sub_block_gain3 = sb_gain3;
+				}
 			) in
+			let pre_flag = gs 1 in
+			let sf_scale = gs 1 in
+			let count1_table = gs 1 in
+			({
+				gc_part2_3_length = part2_3_length;
+				gc_part2_3_offset = part2_3_offset;
+				gc_big_values = big_values;
+				gc_global_gain = global_gain;
+				gc_scf_compress_index = scf_compress;
+				gc_window = window;
+				gc_pre_flag = (pre_flag = 1);
+				gc_sf_scale = sf_scale;
+				gc_count1_table_1 = (count1_table = 1);
+			}, part2_3_offset + part2_3_length)
+		) in
 
-			match f.f1_header.header_channel_mode with
-			| ChannelMono -> (
-				let main_data = gs 9 in
-				let _ = gs 5 in
-				let a = gs 1 in
-				let b = gs 1 in
-				let c = gs 1 in
-				let d = gs 1 in
-				let side_scfi = [| [| a = 1; b = 1; c = 1; d = 1 |] |] in
-				let (side_gc1, new_so_far) = read_gc 0 in
-				let (side_gc2,     _     ) = read_gc new_so_far in
-				{
-					side_main_data_begin = main_data;
-					side_scfi = side_scfi;
-					side_gc = [| [| side_gc1 |]; [| side_gc2 |] |];
-				}
-			)
-			| _ -> (
-				let main_data = gs 9 in
-				let _ = gs 3 in
-				let a = gs 1 in
-				let b = gs 1 in
-				let c = gs 1 in
-				let d = gs 1 in
-				let e = gs 1 in
-				let f = gs 1 in
-				let g = gs 1 in
-				let h = gs 1 in
-				let side_scfi = [| [| a = 1; b = 1; c = 1; d = 1 |]; [| e = 1; f = 1; g = 1; h = 1 |] |] in
-				let (side_gc1, new_so_far) = read_gc 0 in
-				let (side_gc2, new_so_far) = read_gc new_so_far in
-				let (side_gc3, new_so_far) = read_gc new_so_far in
-				let (side_gc4,     _     ) = read_gc new_so_far in
-				{
-					side_main_data_begin = main_data;
-					side_scfi = side_scfi;
-					side_gc = [| [| side_gc1; side_gc2 |]; [| side_gc3; side_gc4 |] |];
-				}
-			)
+		match f.f1_header.header_channel_mode with
+		| Mono -> (
+			let main_data = gs 9 in
+			let _ = gs 5 in
+			let a = gs 1 in
+			let b = gs 1 in
+			let c = gs 1 in
+			let d = gs 1 in
+			let side_scfi = SCFI_mono (a = 1, b = 1, c = 1, d = 1) in
+			let (side_gc1, new_so_far) = read_gc 0 in
+			let (side_gc2,     _     ) = read_gc new_so_far in
+			{
+				side_main_data_begin = main_data;
+				side_scfi = side_scfi;
+				side_gc = GC_1_mono (side_gc1, side_gc2);
+			}
 		)
-		| _ -> (
-
-			let read_gc part2_3_offset = (
-				let part2_3_length = gs 12 in
-				let big_values = gs 9 in
-				let global_gain = gs 8 in
-				let scf_compress = gs 9 in
-				let window_flag = gs 1 in
-				let window = if window_flag = 0 then (
-					let huff1 = gs 5 in
-					let huff2 = gs 5 in
-					let huff3 = gs 5 in
-					let r0 = gs 4 in
-					let r1 = gs 3 in
-					Window_normal {
-						normal_table_select1 = huff1;
-						normal_table_select2 = huff2;
-						normal_table_select3 = huff3;
-						normal_region_0_count = r0;
-						normal_region_1_count = r1;
-					}
-				) else (
-					let block_type_index = gs 2 in
-					let mixed_block = gs 1 in
-					let huff1 = gs 5 in
-					let huff2 = gs 5 in
-					let sb_gain1 = gs 3 in
-					let sb_gain2 = gs 3 in
-					let sb_gain3 = gs 3 in
-					Window_other {
-						other_block_type = [| Block_type_long; Block_type_start; Block_type_short; Block_type_stop |].(block_type_index);
-						other_mixed_block = (mixed_block = 1);
-						other_table_select1 = huff1;
-						other_table_select2 = huff2;
-						other_sub_block_gain1 = sb_gain1;
-						other_sub_block_gain2 = sb_gain2;
-						other_sub_block_gain3 = sb_gain3;
-					}
-				) in
-				let sf_scale = gs 1 in
-				let count1_table = gs 1 in
-				({
-					gc_part2_3_length = part2_3_length;
-					gc_part2_3_offset = part2_3_offset;
-					gc_big_values = big_values;
-					gc_global_gain = global_gain;
-					gc_scf_compress_index = scf_compress;
-					gc_window = window;
-					gc_pre_flag = false; (* No pre flag for MPEG2 *)
-					gc_sf_scale = sf_scale;
-					gc_count1_table_1 = (count1_table = 1);
-				}, part2_3_offset + part2_3_length)
+		| Stereo _ -> (
+			let main_data = gs 9 in
+			let _ = gs 3 in
+			let a = gs 1 in
+			let b = gs 1 in
+			let c = gs 1 in
+			let d = gs 1 in
+			let e = gs 1 in
+			let f = gs 1 in
+			let g = gs 1 in
+			let h = gs 1 in
+			let side_scfi = SCFI_stereo ((a = 1, b = 1, c = 1, d = 1), (e = 1, f = 1, g = 1, h = 1)) in
+			let (side_gc1, new_so_far) = read_gc 0 in
+			let (side_gc2, new_so_far) = read_gc new_so_far in
+			let (side_gc3, new_so_far) = read_gc new_so_far in
+			let (side_gc4,     _     ) = read_gc new_so_far in
+			{
+				side_main_data_begin = main_data;
+				side_scfi = side_scfi;
+				side_gc = GC_1_stereo (side_gc1, side_gc2, side_gc3, side_gc4);
+			}
+		)
+	)
+	| MPEG2 _ -> (
+		let read_gc part2_3_offset = (
+			let part2_3_length = gs 12 in
+			let big_values = gs 9 in
+			let global_gain = gs 8 in
+			let scf_compress = gs 9 in
+			let window_flag = gs 1 in
+			let window = if window_flag = 0 then (
+				let huff1 = gs 5 in
+				let huff2 = gs 5 in
+				let huff3 = gs 5 in
+				let r0 = gs 4 in
+				let r1 = gs 3 in
+				Window_normal {
+					normal_table_select1 = huff1;
+					normal_table_select2 = huff2;
+					normal_table_select3 = huff3;
+					normal_region_0_count = r0;
+					normal_region_1_count = r1;
+				}
+			) else (
+				let block_type_index = gs 2 in
+				let mixed_block = gs 1 in
+				let huff1 = gs 5 in
+				let huff2 = gs 5 in
+				let sb_gain1 = gs 3 in
+				let sb_gain2 = gs 3 in
+				let sb_gain3 = gs 3 in
+				Window_other {
+					other_block_type = [| Block_type_long; Block_type_start; Block_type_short; Block_type_stop |].(block_type_index);
+					other_mixed_block = (mixed_block = 1);
+					other_table_select1 = huff1;
+					other_table_select2 = huff2;
+					other_sub_block_gain1 = sb_gain1;
+					other_sub_block_gain2 = sb_gain2;
+					other_sub_block_gain3 = sb_gain3;
+				}
 			) in
+			let sf_scale = gs 1 in
+			let count1_table = gs 1 in
+			({
+				gc_part2_3_length = part2_3_length;
+				gc_part2_3_offset = part2_3_offset;
+				gc_big_values = big_values;
+				gc_global_gain = global_gain;
+				gc_scf_compress_index = scf_compress;
+				gc_window = window;
+				gc_pre_flag = false; (* No pre flag for MPEG2 *)
+				gc_sf_scale = sf_scale;
+				gc_count1_table_1 = (count1_table = 1);
+			}, part2_3_offset + part2_3_length)
+		) in
 
-			match f.f1_header.header_channel_mode with
-			| ChannelMono -> (
-				let main_data = gs 8 in
-				let _ = gs 1 in
-				let (side_gc, _) = read_gc 0 in
-				{
-					side_main_data_begin = main_data;
-					side_scfi = [| |];
-					side_gc = [| [| side_gc |] |]
-				}
-			)
-			| _ -> (
-				let main_data = gs 8 in
-				let _ = gs 2 in
-				let (side_gc1, new_so_far) = read_gc 0 in
-				let (side_gc2,     _     ) = read_gc new_so_far in
-				{
-					side_main_data_begin = main_data;
-					side_scfi = [| |];
-					side_gc = [| [| side_gc1; side_gc2 |] |]
-				}
-			) (* Mono / stereo *)
-		) (* MPEG 2/2.5 *)
-	in (* defines side_info *)
+		match f.f1_header.header_channel_mode with
+		| Mono -> (
+			let main_data = gs 8 in
+			let _ = gs 1 in
+			let (side_gc, _) = read_gc 0 in
+			{
+				side_main_data_begin = main_data;
+				side_scfi = SCFI_none;
+				side_gc = GC_2_mono side_gc
+			}
+		)
+		| Stereo _ -> (
+			let main_data = gs 8 in
+			let _ = gs 2 in
+			let (side_gc1, new_so_far) = read_gc 0 in
+			let (side_gc2,     _     ) = read_gc new_so_far in
+			{
+				side_main_data_begin = main_data;
+				side_scfi = SCFI_none;
+				side_gc = GC_2_stereo (side_gc1, side_gc2);
+			}
+		) (* Mono / stereo *)
+	)
+;;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+let decode_frame : type id chan. _ -> _ -> (id,chan) f1_t -> (id,chan) frame_data_t * bool = fun state file_state f ->
+	let p = state.q_print_recompress in
+
+	let side_info = decode_side_info f in
 
 (*	print_side side_info;*)
 
-	let decoded = (
-		let k = f.f1_header in
-		(* This is needed for the new async quant readers *)
-		let data_ptr = Ptr.Ref.to_ptr f.f1_data in
-		let data_ptr_ref = Ptr.Ref.of_ptr data_ptr in
+	let k = f.f1_header in
+	(* This is needed for the new async quant readers *)
+	let data_ptr = Ptr.Ref.to_ptr f.f1_data in
+	let data_ptr_ref = Ptr.Ref.of_ptr data_ptr in
 
-		match (f.f1_header.header_id, f.f1_header.header_channel_mode) with
-		| (MPEG1, ChannelMono) -> (
-			p [Str "DECODE FRAME "; Int f.f1_num; Str " (MPEG1, MONO)"];
-			p [Str "  Side "; Ptrref f.f1_side.side_raw];
-			p [Str "  Data "; Ptrref f.f1_data];
-			if state.q_debug_recompress then print_side p 4 side_info;
-			p [Str "  Gr0:"];
+	let replace_side_info : type id chan. (id,chan) side_internal_t -> (id,chan) side_gc_selector_t -> (id,chan) side_internal_t = fun s r ->
+		match s with
+		| {side_gc = GC_1_mono _} -> {s with side_gc = r}
+		| {side_gc = GC_1_stereo _} -> {s with side_gc = r}
+		| {side_gc = GC_2_mono _} -> {s with side_gc = r}
+		| {side_gc = GC_2_stereo _} -> {s with side_gc = r}
+	in
+(*	let update_frame_data : type id chan. (id,chan) Types.Types2.f1_t -> (id,chan) side_gc_selector_t -> ( *)
 
-			let s = Ptr.Ref.new_seq f.f1_data in
-			Ptr.Ref.set_seq s side_info.side_gc.(0).(0).gc_part2_3_offset;
+	match f.f1_header(*(f.f1_header.header_id, f.f1_header.header_channel_mode)*) with
+	| {header_id = MPEG1; header_channel_mode = Mono}(*(MPEG1, Mono)*) -> (
+		p [Str "DECODE FRAME "; Int f.f1_num; Str " (MPEG1, MONO)"];
+		p [Str "  Side "; Ptrref f.f1_side.side_raw];
+		p [Str "  Data "; Ptrref f.f1_data];
+		if state.q_debug_recompress then print_side p 4 side_info;
+		p [Str "  Gr0:"];
 
-			(* The rehuff does nothing for non-normal windows, so just get the scf bands for non-short blocks *)
-			let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
+		let GC_1_mono (gc0,gc1) = side_info.side_gc in
+		let SCFI_mono scfi = side_info.side_scfi in
 
-			let (scf0, qp0, error0) = read_scalefactors_m1 state [| false;false;false;false |]  None       side_info.side_gc.(0).(0) s  file_state k data_ptr in
-			let gc0 = rehuff_granule state qp0 side_info.side_gc.(0).(0) scf_bands_ptr in
+		let s = Ptr.Ref.new_seq f.f1_data in
+		Ptr.Ref.set_seq s gc0.gc_part2_3_offset;
 
-			Ptr.Ref.set_seq s side_info.side_gc.(1).(0).gc_part2_3_offset;
-			p [Str "  Gr1:"];
-			let (scf1, qp1, error1) = read_scalefactors_m1 state side_info.side_scfi.(0)       (Some scf0) side_info.side_gc.(1).(0) s  file_state k data_ptr in
-			let gc1 = rehuff_granule state qp1 side_info.side_gc.(1).(0) scf_bands_ptr in
+		(* The rehuff does nothing for non-normal windows, so just get the scf bands for non-short blocks *)
+		let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
 
-			(
-				M1_frame_data {
-					m1_header = f.f1_header;
-					m1_side_info = {side_info with side_gc = [| [| (*Event.sync get_*)gc0 |]; [| (*Event.sync get_*)gc1 |] |]};
-					m1_scalefactors = [| [| scf0  |]; [| scf1 |] |];
-					m1_quantizer_ptrs = [| [| qp0 |]; [| qp1 |] |];
-					m1_starting_f1 = f;
-				}
-			,
-				error0 || error1
-			)
+		let (scf0, qp0, error0) = read_scalefactors_m1 state no_scfi None       gc0 s  file_state k data_ptr in
+		let gc0 = rehuff_granule state qp0 gc0 scf_bands_ptr in
+
+		Ptr.Ref.set_seq s gc1.gc_part2_3_offset;
+		p [Str "  Gr1:"];
+		let (scf1, qp1, error1) = read_scalefactors_m1 state scfi       (Some scf0) gc1 s  file_state k data_ptr in
+		let gc1 = rehuff_granule state qp1 gc1 scf_bands_ptr in
+
+(*		let si2 =  in*)
+
+		(
+			M1_frame_data {
+				m1_header = f.f1_header;
+				m1_side_info = replace_side_info side_info (GC_1_mono (gc0,gc1));
+				m1_scalefactors = M1_scalefactors_mono (scf0,scf1);
+				m1_quantizer_ptrs = M1_quantizers_mono (qp0,qp1);
+				m1_starting_f1 = f;
+			}
+		,
+			error0 || error1
 		)
-		| (MPEG1, _) -> (
-			p [Str "DECODE FRAME "; Int f.f1_num; Str " (MPEG1, STEREO)"];
-			p [Str "  Side "; Ptrref f.f1_side.side_raw];
-			p [Str "  Data "; Ptrref f.f1_data];
-			if state.q_debug_recompress then print_side p 4 side_info;
+	)
+	| {header_id = MPEG1; header_channel_mode = Stereo _}(*(MPEG1, Stereo _)*) -> (
+		p [Str "DECODE FRAME "; Int f.f1_num; Str " (MPEG1, STEREO)"];
+		p [Str "  Side "; Ptrref f.f1_side.side_raw];
+		p [Str "  Data "; Ptrref f.f1_data];
+		if state.q_debug_recompress then print_side p 4 side_info;
 
-			let s = Ptr.Ref.new_seq data_ptr_ref in
+		let s = Ptr.Ref.new_seq data_ptr_ref in
+		let GC_1_stereo (gc00,gc01,gc10,gc11) = side_info.side_gc in
+		let SCFI_stereo (scfi_ch0, scfi_ch1) = side_info.side_scfi in
 
-			(* things for inline rehuff *)
-			(* The rehuff does nothing for non-normal windows, so just get the scf bands for non-short blocks *)
-			let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
+		(* things for inline rehuff *)
+		(* The rehuff does nothing for non-normal windows, so just get the scf bands for non-short blocks *)
+		let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
 
-			p [Str "  Gr0 Ch0:"];
-			Ptr.Ref.set_seq s side_info.side_gc.(0).(0).gc_part2_3_offset;
-			let (scf00, qp00, error00) = read_scalefactors_m1 state [| false;false;false;false |]  None        side_info.side_gc.(0).(0) s  file_state k data_ptr in
-			let gc00 = rehuff_granule state qp00 side_info.side_gc.(0).(0) scf_bands_ptr in
+		p [Str "  Gr0 Ch0:"];
+		Ptr.Ref.set_seq s gc00.gc_part2_3_offset;
+		let (scf00, qp00, error00) = read_scalefactors_m1 state no_scfi None        gc00 s  file_state k data_ptr in
+		let gc00 = rehuff_granule state qp00 gc00 scf_bands_ptr in
 
-			p [Str "  Gr0 Ch1:"];
-			Ptr.Ref.set_seq s side_info.side_gc.(0).(1).gc_part2_3_offset;
-			let (scf01, qp01, error01) = read_scalefactors_m1 state [| false;false;false;false |]  None        side_info.side_gc.(0).(1) s  file_state k data_ptr in
-			let gc01 = rehuff_granule state qp01 side_info.side_gc.(0).(1) scf_bands_ptr in
+		p [Str "  Gr0 Ch1:"];
+		Ptr.Ref.set_seq s gc01.gc_part2_3_offset;
+		let (scf01, qp01, error01) = read_scalefactors_m1 state no_scfi None        gc01 s  file_state k data_ptr in
+		let gc01 = rehuff_granule state qp01 gc01 scf_bands_ptr in
 
-			p [Str "  Gr1 Ch0:"];
-			Ptr.Ref.set_seq s side_info.side_gc.(1).(0).gc_part2_3_offset;
-			let (scf10, qp10, error10) = read_scalefactors_m1 state side_info.side_scfi.(0)       (Some scf00) side_info.side_gc.(1).(0) s  file_state k data_ptr in
-			let gc10 = rehuff_granule state qp10 side_info.side_gc.(1).(0) scf_bands_ptr in
+		p [Str "  Gr1 Ch0:"];
+		Ptr.Ref.set_seq s gc10.gc_part2_3_offset;
+		let (scf10, qp10, error10) = read_scalefactors_m1 state scfi_ch0       (Some scf00) gc10 s  file_state k data_ptr in
+		let gc10 = rehuff_granule state qp10 gc10 scf_bands_ptr in
 
-			p [Str "  Gr1 Ch1:"];
-			Ptr.Ref.set_seq s side_info.side_gc.(1).(1).gc_part2_3_offset;
-			let (scf11, qp11, error11) = read_scalefactors_m1 state side_info.side_scfi.(1)       (Some scf01) side_info.side_gc.(1).(1) s  file_state k data_ptr in
-			let gc11 = rehuff_granule state qp11 side_info.side_gc.(1).(1) scf_bands_ptr in
+		p [Str "  Gr1 Ch1:"];
+		Ptr.Ref.set_seq s gc11.gc_part2_3_offset;
+		let (scf11, qp11, error11) = read_scalefactors_m1 state scfi_ch1       (Some scf01) gc11 s  file_state k data_ptr in
+		let gc11 = rehuff_granule state qp11 gc11 scf_bands_ptr in
 
 
-			p [Str "Done decoding"];
+		p [Str "Done decoding"];
 
-			(
-				M1_frame_data {
-					m1_header = f.f1_header;
-					m1_side_info = {side_info with side_gc = [| [| (*Event.sync get_*)gc00; (*Event.sync get_*)gc01 |]; [| (*Event.sync get_*)gc10; (*Event.sync get_*)gc11 |] |]};
-					m1_scalefactors = [| [| scf00; scf01 |]; [| scf10; scf11 |] |];
-					m1_quantizer_ptrs = [| [| qp00; qp01 |]; [| qp10; qp11 |] |];
-					m1_starting_f1 = f;
-				}
-			,
-				error00 || error01 || error10 || error11
-			)
+		(
+			M1_frame_data {
+				m1_header = f.f1_header;
+				m1_side_info = {side_info with side_gc = GC_1_stereo (gc00,gc01,gc10,gc11)};
+				m1_scalefactors = M1_scalefactors_stereo (scf00,scf01,scf10,scf11);
+				m1_quantizer_ptrs = M1_quantizers_stereo (qp00,qp01,qp10,qp11);
+				m1_starting_f1 = f;
+			}
+		,
+			error00 || error01 || error10 || error11
 		)
-		| (_, ChannelMono) -> (
-			p [Str "DECODE FRAME "; Int f.f1_num; Str " (MPEG2, MONO)"];
-			p [Str "  Side "; Ptrref f.f1_side.side_raw];
-			p [Str "  Data "; Ptrref f.f1_data];
-			if state.q_debug_recompress then print_side p 4 side_info;
+	)
+	| {header_id = MPEG2 _; header_channel_mode = Mono}(*(MPEG2 _, Mono)*) -> (
+		p [Str "DECODE FRAME "; Int f.f1_num; Str " (MPEG2, MONO)"];
+		p [Str "  Side "; Ptrref f.f1_side.side_raw];
+		p [Str "  Data "; Ptrref f.f1_data];
+		if state.q_debug_recompress then print_side p 4 side_info;
 
-			p [Str "Gr:"];
-			let s = Ptr.Ref.new_seq f.f1_data in
-			Ptr.Ref.set_seq s side_info.side_gc.(0).(0).gc_part2_3_offset;
+		p [Str "Gr:"];
+		let s = Ptr.Ref.new_seq f.f1_data in
+		let GC_2_mono gc = side_info.side_gc in
+		Ptr.Ref.set_seq s gc.gc_part2_3_offset;
 
-			let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
+		let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
 
-			let scf = read_scalefactors_m2 state false side_info.side_gc.(0).(0) s in
-			let ((*q,*) qp, error) = read_quantizers state file_state k side_info.side_gc.(0).(0) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) in
-			let gc = rehuff_granule state qp side_info.side_gc.(0).(0) scf_bands_ptr in
+		let scf = read_scalefactors_m2 state false gc s in
+		let ((*q,*) qp, error) = read_quantizers state file_state k gc data_ptr s.Ptr.Ref.seq_at (gc.gc_part2_3_length + gc.gc_part2_3_offset) in
+		let gc = rehuff_granule state qp gc scf_bands_ptr in
 
-			(
-				M2_frame_data {
-					m2_header = f.f1_header;
-					m2_side_info = {side_info with side_gc = [| [| (*Event.sync get_*)gc |] |]};
-					m2_scalefactors = [| scf |];
-					m2_quantizer_ptrs = [| qp |];
-					m2_starting_f1 = f;
-				}
-			,
-				error
-			)
+		(
+			M2_frame_data {
+				m2_header = f.f1_header;
+				m2_side_info = {side_info with side_gc = GC_2_mono gc};
+				m2_scalefactors = M2_scalefactors_mono scf;
+				m2_quantizer_ptrs = M2_quantizers_mono qp;
+				m2_starting_f1 = f;
+			}
+		,
+			error
 		)
-		| (_, _) -> (
-			p [Str "DECODE FRAME "; Int f.f1_num; Str " (MPEG2, STEREO)"];
-			p [Str "  Side "; Ptrref f.f1_side.side_raw];
-			p [Str "  Data "; Ptrref f.f1_data];
-			if state.q_debug_recompress then print_side p 4 side_info;
+	)
+	| {header_id = MPEG2 _; header_channel_mode = Stereo _}(*(MPEG2 _, Stereo _)*) -> (
+		p [Str "DECODE FRAME "; Int f.f1_num; Str " (MPEG2, STEREO)"];
+		p [Str "  Side "; Ptrref f.f1_side.side_raw];
+		p [Str "  Data "; Ptrref f.f1_data];
+		if state.q_debug_recompress then print_side p 4 side_info;
 
-			(* Remember that the IS should only be set on the right channel; the left channel uses the same scalefactors as non-IS GCs *)
-			p [Str "  Gr0:"];
-			let s = Ptr.Ref.new_seq f.f1_data in
-			Ptr.Ref.set_seq s side_info.side_gc.(0).(0).gc_part2_3_offset;
+		(* Remember that the IS should only be set on the right channel; the left channel uses the same scalefactors as non-IS GCs *)
+		p [Str "  Gr0:"];
+		let s = Ptr.Ref.new_seq f.f1_data in
+		let GC_2_stereo (gc0,gc1) = side_info.side_gc in
 
-			let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
+		Ptr.Ref.set_seq s gc0.gc_part2_3_offset;
 
-			let scf0 = read_scalefactors_m2 state         false         side_info.side_gc.(0).(0) s in
-			let ((*q0,*) qp0, error0) = read_quantizers state file_state k side_info.side_gc.(0).(0) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) in
-			let gc0 = rehuff_granule state qp0 side_info.side_gc.(0).(0) scf_bands_ptr in
+		let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
 
-			p [Str "  Gr1:"];
-			Ptr.Ref.set_seq s side_info.side_gc.(0).(1).gc_part2_3_offset;
-			let scf1 = read_scalefactors_m2 state f.f1_header.header_is side_info.side_gc.(0).(1) s in
-			let ((*q1,*) qp1, error1) = read_quantizers state file_state k side_info.side_gc.(0).(1) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(1).gc_part2_3_length + side_info.side_gc.(0).(1).gc_part2_3_offset) in
-			let gc1 = rehuff_granule state qp1 side_info.side_gc.(0).(1) scf_bands_ptr in
+		let scf0 = read_scalefactors_m2 state         false         gc0 s in
+		let ((*q0,*) qp0, error0) = read_quantizers state file_state k gc0 data_ptr s.Ptr.Ref.seq_at (gc0.gc_part2_3_length + gc0.gc_part2_3_offset) in
+		let gc0 = rehuff_granule state qp0 gc0 scf_bands_ptr in
 
-			(
-				M2_frame_data {
-					m2_header = f.f1_header;
-					m2_side_info = {side_info with side_gc = [| [| (*Event.sync get_*)gc0; (*Event.sync get_*)gc1 |] |]};
-					m2_scalefactors = [| scf0; scf1 |];
-(*					m2_quantizers = [| q0; q1 |];*)
-					m2_quantizer_ptrs = [| qp0; qp1 |];
-					m2_starting_f1 = f;
-				}
-			,
-				error0 || error1
-			)
+		let is_is = match f.f1_header.header_channel_mode with
+			| Stereo Stereo_joint {js_is = is} -> is
+			| _ -> false
+		in
+
+		p [Str "  Gr1:"];
+		Ptr.Ref.set_seq s gc1.gc_part2_3_offset;
+		let scf1 = read_scalefactors_m2 state is_is(*f.f1_header.header_is*) gc1 s in
+		let ((*q1,*) qp1, error1) = read_quantizers state file_state k gc1 data_ptr s.Ptr.Ref.seq_at (gc1.gc_part2_3_length + gc1.gc_part2_3_offset) in
+		let gc1 = rehuff_granule state qp1 gc1 scf_bands_ptr in
+
+		(
+			M2_frame_data {
+				m2_header = f.f1_header;
+				m2_side_info = {side_info with side_gc = GC_2_stereo (gc0,gc1)};
+				m2_scalefactors = M2_scalefactors_stereo (scf0,scf1);
+(*				m2_quantizers = [| q0; q1 |];*)
+				m2_quantizer_ptrs = M2_quantizers_stereo (qp0,qp1);
+				m2_starting_f1 = f;
+			}
+		,
+			error0 || error1
 		)
-	) in
-
-	p [Str "Fully decoded and synced with process threads"];
-(*	decode_granule_channel f side_info*)
-
-	decoded
+	)
 ;;
-
 
 
 
@@ -1125,10 +1286,10 @@ let decode_frame state file_state f =
 (**********************************************************************************************)
 (* ENCODE FRAME ENCODE FRAME ENCODE FRAME ENCODE FRAME ENCODE FRAME ENCODE FRAME ENCODE FRAME *)
 (**********************************************************************************************)
-let encode_frame state _(*file_state*) d =
+let encode_frame : type id chan. _ -> (id,chan) frame_data_t -> (id,chan) f1_t = fun state d ->
 	let p = state.q_print_recompress in
 
-	let write_granule_m1 k s scfsi gc scf (*quants*) quants_ptr = (
+	let write_granule_m1 k s (scfsia,scfsib,scfsic,scfsid) gc scf (*quants*) quants_ptr = (
 		(* Scalefactors *)
 		let (scf_bits1, scf_bits2) = scalefactor_compress_m1.(gc.gc_scf_compress_index) in
 		let (num1, _(*num2*)) = (match gc.gc_window with
@@ -1142,16 +1303,16 @@ let encode_frame state _(*file_state*) d =
 			if i >= Array.length scf then (
 				p [Str "!"];
 			) else if i < 6 then (
-				if scfsi.(0) then () else (p [Str "0"]; Ptr.put_seq s num_bits scf.(i));
+				if scfsia then () else (p [Str "0"]; Ptr.put_seq s num_bits scf.(i));
 				write_scf (succ i)
 			) else if i < 11 then (
-				if scfsi.(1) then () else (p [Str "1"]; Ptr.put_seq s num_bits scf.(i));
+				if scfsib then () else (p [Str "1"]; Ptr.put_seq s num_bits scf.(i));
 				write_scf (succ i)
 			) else if i < 16 then (
-				if scfsi.(2) then () else (p [Str "2"]; Ptr.put_seq s num_bits scf.(i));
+				if scfsic then () else (p [Str "2"]; Ptr.put_seq s num_bits scf.(i));
 				write_scf (succ i)
 			) else if i < 21 then (
-				if scfsi.(3) then () else (p [Str "3"]; Ptr.put_seq s num_bits scf.(i));
+				if scfsid then () else (p [Str "3"]; Ptr.put_seq s num_bits scf.(i));
 				write_scf (succ i)
 			) else (
 				p [Str "+"]; Ptr.put_seq s num_bits scf.(i);
@@ -1271,7 +1432,7 @@ let encode_frame state _(*file_state*) d =
 
 
 	match d with
-	| M1_frame_data m when m.m1_header.header_channel_mode = ChannelMono -> (
+	| M1_frame_data ({m1_header = {header_channel_mode = Mono}} as m) -> (
 		(* MONO MPEG1 *)
 		let k = m.m1_header in
 
@@ -1281,13 +1442,17 @@ let encode_frame state _(*file_state*) d =
 		(* 1931 bytes is the maximum for one frame. It fills up all 1441 bytes (minus 4 for header and 17 for side) of a 32khz 320kbps padded frame plus 511 bytes for the reservoir *)
 		let out_ptr = Ptr.clearret (Ptr.make 1931 0) in (* 2881??? Where did I get that from? *)
 		let s = Ptr.new_seq out_ptr in
+		let GC_1_mono (gc0,gc1) = m.m1_side_info.side_gc in
+		let M1_scalefactors_mono (scf0,scf1) = m.m1_scalefactors in
+		let M1_quantizers_mono (qp0,qp1) = m.m1_quantizer_ptrs in
+		let SCFI_mono scfi = m.m1_side_info.side_scfi in
 
 		let r0 = s.Ptr.seq_at in
 		p [Str "Doing first granule at "; Int r0; Str " (had better be 0)"];
-		write_granule_m1 k s [| false;false;false;false |] m.m1_side_info.side_gc.(0).(0) m.m1_scalefactors.(0).(0) (*m.m1_quantizers.(0).(0)*) m.m1_quantizer_ptrs.(0).(0);
+		write_granule_m1 k s no_scfi gc0 scf0 qp0;
 		let r1 = s.Ptr.seq_at in
 		p [Str "First granule done; starting second at "; Int r1];
-		write_granule_m1 k s m.m1_side_info.side_scfi.(0)  m.m1_side_info.side_gc.(1).(0) m.m1_scalefactors.(1).(0) (*m.m1_quantizers.(1).(0)*) m.m1_quantizer_ptrs.(1).(0);
+		write_granule_m1 k s scfi    gc1 scf1 qp1;
 		let r2 = s.Ptr.seq_at in
 		p [Str "Second granule done at "; Int r2];
 
@@ -1297,10 +1462,11 @@ let encode_frame state _(*file_state*) d =
 			let pb = Ptr.put_bits p in
 			pb 0 9 s.side_main_data_begin;
 			pb 9 5 0;
-			pb 14 1 (if s.side_scfi.(0).(0) then 1 else 0);
-			pb 15 1 (if s.side_scfi.(0).(1) then 1 else 0);
-			pb 16 1 (if s.side_scfi.(0).(2) then 1 else 0);
-			pb 17 1 (if s.side_scfi.(0).(3) then 1 else 0);
+			let (scfia,scfib,scfic,scfid) = scfi in
+			pb 14 1 (if scfia then 1 else 0);
+			pb 15 1 (if scfib then 1 else 0);
+			pb 16 1 (if scfic then 1 else 0);
+			pb 17 1 (if scfid then 1 else 0);
 			let pack_gc gc bits o = (
 				pb (o +  0) 12 bits;
 				pb (o + 12)  9 gc.gc_big_values;
@@ -1330,9 +1496,9 @@ let encode_frame state _(*file_state*) d =
 				pb (o + 57) 1 gc.gc_sf_scale;
 				pb (o + 58) 1 (if gc.gc_count1_table_1 then 1 else 0);
 			) in
-			pack_gc s.side_gc.(0).(0) (r1 - r0) 18;
-			pack_gc s.side_gc.(1).(0) (r2 - r1) 77;
-			(p, [| r1 - r0; r2 - r1 |], (r2 - r0 + 7) asr 3)
+			pack_gc gc0 (r1 - r0) 18;
+			pack_gc gc1 (r2 - r1) 77;
+			(p, Bits_1_mono (r1 - r0, r2 - r1), (r2 - r0 + 7) asr 3)
 		in
 
 		p [Str "Done packing the side info"];
@@ -1352,7 +1518,7 @@ let encode_frame state _(*file_state*) d =
 			f1_pad_exact = None;
 		}
 	)
-	| M1_frame_data m -> (
+	| M1_frame_data ({m1_header = {header_channel_mode = Stereo _}} as m) -> (
 		(* STEREO MPEG1 *)
 		let k = m.m1_header in
 
@@ -1362,19 +1528,23 @@ let encode_frame state _(*file_state*) d =
 		(* 1916 bytes is the maximum for one frame. It fills up all 1441 bytes (minus 4 for header and 32 for side) of a 32khz 320kbps padded frame plus 511 bytes for the reservoir *)
 		let out_ptr = Ptr.clearret (Ptr.make 1916 0) in (* 2881 *)
 		let s = Ptr.new_seq out_ptr in
+		let GC_1_stereo (gc00,gc01,gc10,gc11) = m.m1_side_info.side_gc in
+		let M1_scalefactors_stereo (scf00,scf01,scf10,scf11) = m.m1_scalefactors in
+		let M1_quantizers_stereo (qp00,qp01,qp10,qp11) = m.m1_quantizer_ptrs in
+		let SCFI_stereo (scfi_ch0, scfi_ch1) = m.m1_side_info.side_scfi in
 
 		let r0 = s.Ptr.seq_at in (* had better be 0 *)
 		p [Str "Doing first granule at "; Int r0; Str " (had better be 0)"];
-		write_granule_m1 k s [| false;false;false;false |] m.m1_side_info.side_gc.(0).(0) m.m1_scalefactors.(0).(0) (*m.m1_quantizers.(0).(0)*) m.m1_quantizer_ptrs.(0).(0);
+		write_granule_m1 k s no_scfi gc00 scf00 (*m.m1_quantizers.(0).(0)*) qp00;
 		let r1 = s.Ptr.seq_at in
 		p [Str "First granule done; starting second at "; Int r1];
-		write_granule_m1 k s [| false;false;false;false |] m.m1_side_info.side_gc.(0).(1) m.m1_scalefactors.(0).(1) (*m.m1_quantizers.(0).(1)*) m.m1_quantizer_ptrs.(0).(1);
+		write_granule_m1 k s no_scfi gc01 scf01 (*m.m1_quantizers.(0).(1)*) qp01;
 		let r2 = s.Ptr.seq_at in
 		p [Str "Second granule done; starting third at "; Int r2];
-		write_granule_m1 k s m.m1_side_info.side_scfi.(0)  m.m1_side_info.side_gc.(1).(0) m.m1_scalefactors.(1).(0) (*m.m1_quantizers.(1).(0)*) m.m1_quantizer_ptrs.(1).(0);
+		write_granule_m1 k s scfi_ch0  gc10 scf10 (*m.m1_quantizers.(1).(0)*) qp10;
 		let r3 = s.Ptr.seq_at in
 		p [Str "Third granule done; starting fourth at "; Int r3];
-		write_granule_m1 k s m.m1_side_info.side_scfi.(1)  m.m1_side_info.side_gc.(1).(1) m.m1_scalefactors.(1).(1) (*m.m1_quantizers.(1).(1)*) m.m1_quantizer_ptrs.(1).(1);
+		write_granule_m1 k s scfi_ch1  gc11 scf11 (*m.m1_quantizers.(1).(1)*) qp11;
 		let r4 = s.Ptr.seq_at in
 		p [Str "Fourth granule done at "; Int r4];
 
@@ -1387,14 +1557,16 @@ let encode_frame state _(*file_state*) d =
 			let pb = Ptr.put_bits p in
 			pb  0 9 s.side_main_data_begin;
 			pb  9 3 0;
-			pb 12 1 (if s.side_scfi.(0).(0) then 1 else 0);
-			pb 13 1 (if s.side_scfi.(0).(1) then 1 else 0);
-			pb 14 1 (if s.side_scfi.(0).(2) then 1 else 0);
-			pb 15 1 (if s.side_scfi.(0).(3) then 1 else 0);
-			pb 16 1 (if s.side_scfi.(1).(0) then 1 else 0);
-			pb 17 1 (if s.side_scfi.(1).(1) then 1 else 0);
-			pb 18 1 (if s.side_scfi.(1).(2) then 1 else 0);
-			pb 19 1 (if s.side_scfi.(1).(3) then 1 else 0);
+			let (scfia,scfib,scfic,scfid) = scfi_ch0 in
+			pb 12 1 (if scfia then 1 else 0);
+			pb 13 1 (if scfib then 1 else 0);
+			pb 14 1 (if scfic then 1 else 0);
+			pb 15 1 (if scfid then 1 else 0);
+			let (scfia,scfib,scfic,scfid) = scfi_ch1 in
+			pb 16 1 (if scfia then 1 else 0);
+			pb 17 1 (if scfib then 1 else 0);
+			pb 18 1 (if scfic then 1 else 0);
+			pb 19 1 (if scfid then 1 else 0);
 			let pack_gc gc bits o = (
 				pb (o +  0) 12 bits;
 				pb (o + 12)  9 gc.gc_big_values;
@@ -1424,11 +1596,11 @@ let encode_frame state _(*file_state*) d =
 				pb (o + 57) 1 gc.gc_sf_scale;
 				pb (o + 58) 1 (if gc.gc_count1_table_1 then 1 else 0);
 			) in
-			pack_gc s.side_gc.(0).(0) (r1 - r0)  20;
-			pack_gc s.side_gc.(0).(1) (r2 - r1)  79;
-			pack_gc s.side_gc.(1).(0) (r3 - r2) 138;
-			pack_gc s.side_gc.(1).(1) (r4 - r3) 197;
-			(p, [| r1 - r0; r2 - r1; r3 - r2; r4 - r3 |], (r4 - r0 + 7) asr 3)
+			pack_gc gc00 (r1 - r0)  20;
+			pack_gc gc01 (r2 - r1)  79;
+			pack_gc gc10 (r3 - r2) 138;
+			pack_gc gc11 (r4 - r3) 197;
+			(p, Bits_1_stereo (r1 - r0, r2 - r1, r3 - r2, r4 - r3), (r4 - r0 + 7) asr 3)
 		) in
 
 		p [Str "Done packing the side info"];
@@ -1448,17 +1620,20 @@ let encode_frame state _(*file_state*) d =
 			f1_pad_exact = None;
 		}
 	)
-	| M2_frame_data m when m.m2_header.header_channel_mode = ChannelMono -> (
+	| M2_frame_data ({m2_header = {header_channel_mode = Mono}} as m) -> (
 		
 		let k = m.m2_header in
 
 		(* 1441 bytes per frame (8khz, 160kbps, padded) - 4 byte header - 9 byte side + 255 byte reservoir *)
 		let out_ptr = Ptr.clearret (Ptr.make 1683 0) in (* 5761??? *)
 		let s = Ptr.new_seq out_ptr in
+		let GC_2_mono gc = m.m2_side_info.side_gc in
+		let M2_scalefactors_mono scf = m.m2_scalefactors in
+		let M2_quantizers_mono qp = m.m2_quantizer_ptrs in
 
 		let r0 = s.Ptr.seq_at in
 		p [Str "Doing first (and only) granule at "; Int r0; Str " (had better be 0)"];
-		write_granule_m2 k s false m.m2_side_info.side_gc.(0).(0) m.m2_scalefactors.(0) (*m.m2_quantizers.(0)*) m.m2_quantizer_ptrs.(0);
+		write_granule_m2 k s false gc scf (*m.m2_quantizers.(0)*) qp;
 		let r1 = s.Ptr.seq_at in
 		p [Str "Granule done at "; Int r1];
 
@@ -1496,8 +1671,8 @@ let encode_frame state _(*file_state*) d =
 				pb (o + 61) 1 gc.gc_sf_scale;
 				pb (o + 62) 1 (if gc.gc_count1_table_1 then 1 else 0);
 			) in
-			pack_gc s.side_gc.(0).(0) (r1 - r0) 9;
-			(p, [| r1 - r0 |], (r1 - r0 + 7) asr 3)
+			pack_gc gc (r1 - r0) 9;
+			(p, Bits_2_mono (r1 - r0), (r1 - r0 + 7) asr 3)
 		) in
 		
 		p [Str "Done packing the side info"];
@@ -1517,19 +1692,26 @@ let encode_frame state _(*file_state*) d =
 			f1_pad_exact = None;
 		}
 	)
-	| M2_frame_data m -> (
+	| M2_frame_data ({m2_header = {header_channel_mode = Stereo _}} as m) -> (
 		let k = m.m2_header in
 
 		(* 1441 bytes per frame (8khz, 160kbps, padded) - 4 byte header - 17 byte side + 255 byte reservoir *)
 		let out_ptr = Ptr.clearret (Ptr.make 1675 0) in (* 5761??? *)
 		let s = Ptr.new_seq out_ptr in
+		let GC_2_stereo (gc0,gc1) = m.m2_side_info.side_gc in
+		let M2_scalefactors_stereo (scf0,scf1) = m.m2_scalefactors in
+		let M2_quantizers_stereo (qp0,qp1) = m.m2_quantizer_ptrs in
+		let is_is = match m.m2_header.header_channel_mode with
+			| Stereo Stereo_joint {js_is = is} -> is
+			| _ -> false
+		in
 
 		let r0 = s.Ptr.seq_at in
 		p [Str "Doing first granule at "; Int r0; Str " (had better be 0)"];
-		write_granule_m2 k s         false         m.m2_side_info.side_gc.(0).(0) m.m2_scalefactors.(0) (*m.m2_quantizers.(0)*) m.m2_quantizer_ptrs.(0);
+		write_granule_m2 k s false gc0 scf0 (*m.m2_quantizers.(0)*) qp0;
 		let r1 = s.Ptr.seq_at in
 		p [Str "First granule done; starting second at "; Int r1];
-		write_granule_m2 k s m.m2_header.header_is m.m2_side_info.side_gc.(0).(1) m.m2_scalefactors.(1) (*m.m2_quantizers.(1)*) m.m2_quantizer_ptrs.(1);
+		write_granule_m2 k s is_is gc1 scf1 (*m.m2_quantizers.(1)*) qp1;
 		let r2 = s.Ptr.seq_at in
 		p [Str "Second granule done at "; Int r2];
 
@@ -1567,9 +1749,9 @@ let encode_frame state _(*file_state*) d =
 				pb (o + 61) 1 gc.gc_sf_scale;
 				pb (o + 62) 1 (if gc.gc_count1_table_1 then 1 else 0);
 			) in
-			pack_gc s.side_gc.(0).(0) (r1 - r0) 10;
-			pack_gc s.side_gc.(0).(1) (r2 - r1) 73;
-			(p, [| r1 - r0; r2 - r1 |], (r2 - r0 + 7) asr 3)
+			pack_gc gc0 (r1 - r0) 10;
+			pack_gc gc1 (r2 - r1) 73;
+			(p, Bits_2_stereo (r1 - r0, r2 - r1), (r2 - r0 + 7) asr 3)
 			
 		) in
 		
@@ -1592,15 +1774,9 @@ let encode_frame state _(*file_state*) d =
 	)
 ;;
 
-let recompress_frame state file_state f =
+let recompress_frame : type id chan. _ -> _ -> (id,chan) f1_t -> (id,chan) f1_t * bool = fun state file_state f ->
 	let p = state.q_print_recompress in
 
-(*
-	let process_function = match process_set with
-		| SSE41 -> find_best_config_sse41
-		| Set_base -> find_best_config
-	in
-*)
 (*
 	Printf.printf "%d\n" f.f1_num;
 	Printf.printf " Input frame:  \"%s\"\n" (to_hex f.f1_string);
@@ -1612,7 +1788,7 @@ let recompress_frame state file_state f =
 
 	let rehuffed = (*if false then rehuff_frame ~debug:debug decoded else*) decoded in
 
-	let encoded = encode_frame state file_state rehuffed in
+	let encoded = encode_frame state rehuffed in
 
 	if decoder_error then (
 		p [Str "Returning original frame instead of the repacked one"]

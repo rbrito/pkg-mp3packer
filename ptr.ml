@@ -185,19 +185,22 @@ let get_int_of_32u_bswap = get_this "Ptr.get_int_of_32u_bswap" 4 get_int_of_32u_
 let get_bits ?(byte_off=0) ptr off len =
 	let start_byte = off lsr 3 + byte_off in
 	let end_byte = (off + len - 1) lsr 3 + byte_off in
-	if start_byte < 0 || end_byte >= length ptr || len > 30 then (
+	(* Remove the limitation of 30 bits per read in order to do some 32-bit reads in the XING tag *)
+	if start_byte < 0 || end_byte >= length ptr (*|| len > 30*) then (
 		invalid_arg "Ptr.get_bits";
 	) else (
 		let num_bytes_involved = end_byte - start_byte + 1 in
 		let start_reading_byte = end_byte - 3 in (* The last byte should be set to the LSB of the read part. If we set the MSB to be the first byte then it may get chopped off by the OCaml 30-bit int limitation *)
-		if num_bytes_involved <= 3 && start_reading_byte >= 0 then (
+		if false && num_bytes_involved <= 3 && start_reading_byte >= 0 then (
 			(* Just do a single 32-bit read *)
+			(* This breaks when accepting > 30-bit reads *)
 			let raw = get_int_of_32u_bswap ptr start_reading_byte in
 			let shift_by = 7 - (off + len - 1) land 7 in
 			let shifted = raw lsr shift_by in
 			shifted land ((1 lsl len) - 1)
 		) else (
 			let rec keep_reading so_far bits_left i =
+(*				Printf.printf "  so_far=%d with %d bits left\n%!" so_far bits_left;*)
 				if bits_left = 0 then (
 					so_far
 				) else if bits_left >= 8 then (
@@ -210,7 +213,15 @@ let get_bits ?(byte_off=0) ptr off len =
 			in
 			let first_bit_index = off land 7 in
 			let got_too_much = keep_reading 0 (len + first_bit_index) start_byte in
-			got_too_much land ((1 lsl len) - 1)
+
+(*			got_too_much land ((1 lsl len) - 1) (* XXX THIS IS A PROBLEM XXX *)*)
+			if len >= Sys.word_size - 1 then (
+				(* Everything's valid *)
+				got_too_much
+			) else (
+				got_too_much land ((1 lsl len) - 1)
+			)
+
 (*
 			let first_bits = 8 - (off land 7) in
 			let first_mask = (1 lsl first_bits) - 1 in
@@ -660,10 +671,11 @@ module Ref =
 		let get_bits_unsafe r o l =
 			let start_byte = o lsr 3 in
 			let rec keep_going num_so_far bits_left start_byte_now start_bit_now = function
-				| _ when bits_left = 0 -> num_so_far
+				| _ when bits_left = 0 -> ((*Printf.printf "GOT %d\n%!" num_so_far;*) num_so_far)
 				| {p = from_p; off = from_ptr_off; len = from_len} :: tl when start_byte_now < from_len -> (
 					let max_bits = (from_len lsl 3) - start_bit_now in
 					let read_bits = min max_bits bits_left in
+(*					Printf.printf "Shifting %d left by %d\n%!" num_so_far read_bits;*)
 (*					if read_bits <> l then Printf.printf "*" else Printf.printf "-";*)
 					let next = (num_so_far lsl read_bits) lor (get_bits ~byte_off:from_ptr_off from_p (((*from_ptr_off*)0 lsl 3) + start_bit_now) read_bits) in
 					keep_going next (bits_left - read_bits) 0 0 tl
