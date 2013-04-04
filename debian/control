@@ -2,13 +2,17 @@ Source: mp3packer
 Section: sound
 Priority: optional
 Maintainer: Rogério Brito <rbrito@ime.usp.br>
-Build-Depends: debhelper (>= 7.0.50~), ocaml-native-compilers
+Build-Depends:
+ debhelper (>= 7.0.50~),
+ ocaml-native-compilers
 Standards-Version: 3.9.2
 Homepage: http://omion.dyndns.org/mp3packer/
 
 Package: mp3packer
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends}
 Description: lossless rearranger of MP3 files to make them smaller
  MP3packer is a program which attempts to save space of MP3 files by
  storing frame data in the smallest possible frame.
