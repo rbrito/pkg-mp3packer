@@ -180,9 +180,11 @@ let get_int_of_32u_bswap = get_this "Ptr.get_int_of_32u_bswap" 4 get_int_of_32u_
 (*****************)
 
 (* This needs to be big-endian. I'll hard-code the bswap version here, but note that it will fail on big-endian machines *)
-let get_bits ptr off len =
-	let start_byte = off lsr 3 in
-	let end_byte = (off + len - 1) lsr 3 in
+(* This function seems to fail over 256MiB on a 32-bit system, since that's where the number of bits will overflow to 0 *)
+(* (using a negative number doesn't break since we do an lsr, not an asr *)
+let get_bits ?(byte_off=0) ptr off len =
+	let start_byte = off lsr 3 + byte_off in
+	let end_byte = (off + len - 1) lsr 3 + byte_off in
 	if start_byte < 0 || end_byte >= length ptr || len > 30 then (
 		invalid_arg "Ptr.get_bits";
 	) else (
@@ -636,7 +638,7 @@ module Ref =
 				| {p = from_p; off = from_ptr_off; len = from_len} :: tl when o_now < from_len -> (
 					let use_off = from_ptr_off + o_now in
 					let use_len = min (from_len - o_now) l_now in
-					write_unsafe fh from_p use_off use_len true pos_now;
+					ignore (write_unsafe fh from_p use_off use_len true pos_now);
 					keep_writing_at 0 (l_now - use_len) (pos_now + use_len)	tl
 				)
 				| {len = from_len} :: tl -> keep_writing_at (o_now - from_len) l_now pos_now tl
@@ -663,7 +665,7 @@ module Ref =
 					let max_bits = (from_len lsl 3) - start_bit_now in
 					let read_bits = min max_bits bits_left in
 (*					if read_bits <> l then Printf.printf "*" else Printf.printf "-";*)
-					let next = (num_so_far lsl read_bits) lor (get_bits from_p ((from_ptr_off lsl 3) + start_bit_now) read_bits) in
+					let next = (num_so_far lsl read_bits) lor (get_bits ~byte_off:from_ptr_off from_p (((*from_ptr_off*)0 lsl 3) + start_bit_now) read_bits) in
 					keep_going next (bits_left - read_bits) 0 0 tl
 				)
 				| {len = from_len} :: tl -> keep_going num_so_far bits_left (start_byte_now - from_len) (start_bit_now - (from_len lsl 3)) tl
@@ -708,7 +710,6 @@ module Ref =
 			ret
 		;;
 		let set_seq =
-			let max_bytes_away = (if Sys.word_size = 64 then 7 else 3) in
 			fun r p -> (
 				let next_byte = p lsr 3 in
 (*				Printf.printf "Setting from bit %d to %d, and byte %d to %d\n" r.seq_at p r.seq_get_fast_next_byte next_byte;*)
@@ -723,10 +724,8 @@ module Ref =
 			)
 		;;
 		let get_seq_overflow s num =
-			let deleteme_before = s.seq_at in
 			let ret = get_bits_overflow s.seq_ref s.seq_at num in
 			s.seq_at <- s.seq_at + num;
-(*			Printf.printf "Got %d from %d\n" ret deleteme_before;*)
 			ret
 		;;
 
@@ -734,7 +733,7 @@ module Ref =
 		let ref_get_byte r o =
 			let rec get_byte_list off_left = function
 (*				| _ when off_left < 0 -> invalid_arg "Ptr.Ref.ref_get_byte"*)
-				| {p = from_p; off = from_ptr_off; len = from_len} :: tl when off_left < from_len -> (
+				| {p = from_p; off = from_ptr_off; len = from_len} :: _ when off_left < from_len -> (
 					(* Use this ptr *)
 					(* We can use unsafe if the ref has been made with the functions here, rather than directly *)
 					get_int_of_8u_unsafe from_p (from_ptr_off + off_left)

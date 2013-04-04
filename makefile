@@ -13,6 +13,7 @@ else
 endif
 
 
+#common=-w "+a-4-9-32-35" -warn-error "+a-4-6-7-9-27-29-32..39" -warn-error "+a-4-9-32-35" $(SSEOPT) -thread unix.cmxa threads.cmxa str.cmxa $(EXLIBRARIES)
 common=$(SSEOPT) -thread unix.cmxa threads.cmxa str.cmxa $(EXLIBRARIES)
 
 ocaml=ocamlopt.opt $(common)
@@ -38,7 +39,7 @@ else
 endif
 
 
-ALLREQS=ptr.cmx ptr-c$O crc.cmx list2.cmx expandarray.cmx c_part$O unicode.cmx unicode-c$O threadpool.cmx mp3types.cmx p.cmx pack.cmx mp3read.cmx mp3write.cmx mp3info.cmx mp3framehuffman-c$O mp3framehuffman.cmx mp3frameutils-c$O mp3frameutils.cmx mp3queue.cmx
+ALLREQS=ptr.cmx ptr-c$O crc.cmx list2.cmx expandarray.cmx c_part$O unicode.cmx unicode-c$O threadpool.cmx types.cmx p.cmx pack.cmx mp3read.cmx mp3write.cmx mp3info.cmx mp3framehuffman-c$O mp3framehuffman.cmx mp3frameutils-c$O mp3frameutils.cmx mp3queue.cmx
 
 
 

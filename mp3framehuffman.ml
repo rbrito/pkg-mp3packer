@@ -18,7 +18,7 @@
 
 (* Huffman tables! *)
 
-open Mp3types;;
+open Types;;
 open Pack;;
 
 (* get_huffman ht_num int_for_processing start_left_shift *)
@@ -82,7 +82,7 @@ let decode_all_big_quants in_ptr in_bit_off out_ptr in_bit_off_to count0 ht0 cou
 		count2
 	) in
 
-	decode_all_big_quants_unsafe in_ptr in_bit_off out_ptr in_bit_off_to use_count0 ht0 use_count1 ht1 use_count2 ht2
+	decode_all_big_quants_unsafe in_ptr in_bit_off out_ptr use_bit_off_to use_count0 ht0 use_count1 ht1 use_count2 ht2
 ;;
 
 external decode_count1_quants_unsafe : Ptr.t -> int -> int -> Ptr.t -> int -> int -> bool -> bool * int * int = "mfh_decode_count1_quants_bytecode" "mfh_decode_count1_quants";;
@@ -152,7 +152,7 @@ let decode_all_quants in_ptr in_bit_off out_ptr in_bit_off_to count0 ht0 count1 
 		out_quant_off_to
 	) in
 
-	let ret = decode_all_quants_unsafe in_ptr in_bit_off out_ptr in_bit_off_to use_count0 ht0 use_count1 ht1 use_count2 ht2 use_quant_off_to ht1_table1 in
+	let ret = decode_all_quants_unsafe in_ptr in_bit_off out_ptr use_bit_off_to use_count0 ht0 use_count1 ht1 use_count2 ht2 use_quant_off_to ht1_table1 in
 	let (new_error, new_overboard, new_bit_off, new_index) = ret in
 	if new_index > out_quant_off_to then (
 		decoder_error_ref := true;
@@ -1679,7 +1679,7 @@ let make_huffman_tree ht len =
 					find_spot new_out value orig_bits extra_bits new_index;
 					current_out.(current_index) <- Many new_out
 				)
-				| One x -> (
+				| One _ -> (
 					(* This is BAD *)
 					raise (Failure "Huffman table specification incorrect")
 				)
@@ -1742,9 +1742,7 @@ let huffman_decode (r_str, r_at) ht bits =
 
 let huffman_decode_ptrref s ht bits =
 	let rec search_table ht_now =
-		let start_at = s.Ptr.Ref.seq_at in
 		let first_bits = Ptr.Ref.get_seq_fast_overflow s bits in
-(*		Printf.printf "Got %d at %d\n" first_bits start_at;*)
 		match ht_now.(first_bits) with
 		| Single (x, bits) -> (
 			(* TODO: this setting looks dangerous if get_seq_fast is used *)

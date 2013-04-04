@@ -20,14 +20,14 @@ open Mp3read;;
 open Mp3queue;;
 open Mp3info;;
 
-open Mp3types;;
+open Types;;
 
 
 (*Unicode.set_utf8_output ();;*)
 
 
 
-let version = "2.02-260";;
+let version = "2.03-263";;
 
 let padding = Printf.sprintf "mp3packer%s\n" version;;
 
@@ -41,7 +41,7 @@ let rec make_features_string = function
 ;;
 let features_string = make_features_string !features_ref;;
 
-let usage_head = Printf.sprintf "\nMP3 Packer version %s%s\nCopyright 2006-2012 Reed \"Omion\" Wilson\nThis program is covered under the GNU GPL.\nSee gpl.txt or mp3packer.html for more information\nNumber of processors detected: %d\n" version (if features_string = "" then "" else " (" ^ features_string ^ ")") Mp3types.detected_processors;;
+let usage_head = Printf.sprintf "\nMP3 Packer version %s%s\nCopyright 2006-2012 Reed \"Omion\" Wilson\nThis program is covered under the GNU GPL.\nSee gpl.txt or mp3packer.html for more information\nNumber of processors detected: %d\n" version (if features_string = "" then "" else " (" ^ features_string ^ ")") Types.detected_processors;;
 
 
 
@@ -170,7 +170,7 @@ with
 ;;
 
 (* Set the priority *)
-ignore (Mp3types.nice !niceness_ref);;
+ignore (Types.nice !niceness_ref);;
 
 (*
 	This will minimize the bitrate reservoir when a minimum bitrate is specified,
@@ -226,7 +226,7 @@ let print_errors = function
 
 let recompress_fun (state, file_state, frame_to_compress) =
 	try
-		Normal (Mp3frameutils.recompress_frame state (file_state : Mp3types.file_state) frame_to_compress)
+		Normal (Mp3frameutils.recompress_frame state (file_state : Types.file_state) frame_to_compress)
 	with
 		e -> Error e
 ;;
@@ -258,7 +258,6 @@ let queue_state = {
 let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 	(* In order to generalize the do_base function, just ignore the second (output) string if user only wants info *)
 	fun a b -> (
-		let t1 = Unix.gettimeofday () in
 		(try
 			
 			let errors = do_info ~only_bitrate:!only_info_bitrate_ref queue_state.q_print_in ~debug_info:(!debug_out_ref) a in
@@ -268,10 +267,7 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 		with
 			_ -> ()
 		);
-		let t2 = Unix.gettimeofday () in
-(*		Printf.printf "That took %f seconds\n" (t2 -. t1);*)
 		()
-(*		errors*)
 	)
 ) else if !rename_input_ref then (
 	(* Rename the input file, and do_queue backwards to update the original filename *)
@@ -390,12 +386,10 @@ let do_a_dir append_extension din1 dout1 =
 			(* The file has the right extension *)
 			if dout1 = "" && append_extension = "" then (
 				(* An invalid output directory has been passed; don't set the file. This is the case when the -i switch was used *)
-				let errors = do_a_file (Filename.concat din fin) "" in
-				()
+				do_a_file (Filename.concat din fin) ""
 			) else if append_extension = "" || !do_files_with_appended_string_ref || not (Filename.check_suffix fin (append_extension ^ ".mp3")) then (
 				(* The file doesn't have the append_expression already appended to it, or that doesn't matter *)
-				let errors = do_a_file (Filename.concat din fin) (Filename.concat dout (append_before_extension fin append_extension)) in
-				()
+				do_a_file (Filename.concat din fin) (Filename.concat dout (append_before_extension fin append_extension))
 			) else (
 				Printf.printf "SKIPPING FILE '"; Unicode.silly_print (Filename.concat din fin); Printf.printf "'\n";
 			)

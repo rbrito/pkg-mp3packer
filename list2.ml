@@ -263,11 +263,28 @@ let peek_first q =
 	q.head.value
 ;;
 let head = peek_first;;
+let peek_first_perhaps q =
+	if q.length = 0 then (
+		None
+	) else (
+		Some q.head.value
+	)
+;;
+let head_perhaps = peek_first_perhaps;;
+
 let peek_last q =
 	if q.length = 0 then raise Empty;
 	q.tail.value
 ;;
 let tail = peek_last;;
+let peek_last_perhaps q =
+	if q.length = 0 then (
+		None
+	) else (
+		Some q.tail.value
+	)
+;;
+let tail_perhaps = peek_last_perhaps;;
 
 (* To other kinds of data structures *)
 let of_array a =

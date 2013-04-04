@@ -16,9 +16,8 @@
 	Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 *******************************************************************************)
 
-open Mp3types;;
+open Types;;
 open Mp3read;;
-open Pack;;
 
 (* Giving in to the imperative side of the Force *)
 let (+=) a b = (a := !a + b);;
@@ -67,7 +66,7 @@ let do_info ?(only_bitrate=false) p ?(debug_info=false) in_name =
 			req_original     = Req_equal; (* Ditto with original *)
 			req_emphasis     = Req_equal; (* And emphasis... *)
 		} in
-		let (first_req, first_frame, (_ (* 0 *), first_got)) = in_obj#find_next_frame ~force_resync:true ~lame_search:true before_lame_reqs in
+		let (_(*first_req*), first_frame, (_ (* 0 *), first_got)) = in_obj#find_next_frame ~force_resync:true ~lame_search:true before_lame_reqs in
 		match first_frame.if_xing with
 		| None -> (
 			(* The first frame was NOT an XING frame; restart and use more strict after_lame_reqs *)
@@ -188,7 +187,7 @@ let do_info ?(only_bitrate=false) p ?(debug_info=false) in_name =
 			(***********************************)
 			(* Figure out smallest CBR bitrate *)
 			(***********************************)
-			let (number_to_bitrate, bytes_to_bitrate) = (
+			let (_(*number_to_bitrate*), bytes_to_bitrate) = (
 				let (max_bitrate, lists) = match first_real_frame.if_header.header_id with
 					| MPEG1 -> (320, [(1, 32);(2, 40);(3, 48);(4, 45);(5, 64);(6, 80);(7, 96);(8,112);(9,128);(10,160);(11,192);(12,224);(13,256);(14,320)])
 					|   _   -> (160, [(1,  8);(2, 16);(3, 24);(4, 32);(5, 40);(6, 48);(7, 56);(8, 64);(9, 80);(10, 96);(11,112);(12,128);(13,144);(14,160)])

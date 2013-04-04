@@ -59,10 +59,16 @@ val nth : 'a t -> int -> 'a
 val peek_first : 'a t -> 'a
 val head : 'a t -> 'a
 (** Returns the first element of the list without changing the contonts *)
+val peek_first_perhaps : 'a t -> 'a option
+val head_perhaps : 'a t -> 'a option
+(** Returns the first element of the list or None if empty *)
 
 val peek_last : 'a t -> 'a
 val tail : 'a t -> 'a
 (** Returns the last element of the list without changing the contonts *)
+val peek_last_perhaps : 'a t -> 'a option
+val tail_perhaps : 'a t -> 'a option
+(** Returns the last element of the list or None if empty *)
 
 val of_array : 'a array -> 'a t
 val to_array : 'a t -> 'a array

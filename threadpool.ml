@@ -1,5 +1,5 @@
 (*
-open Mp3types;;
+open Types;;
 
 (* These should be defined elsewhere *)
 let num_threads = detected_processors;;
@@ -293,7 +293,7 @@ let slot_is_done = function
 ;;
 
 class ['a,'b] per_function (f : 'a -> 'b) max_threads =
-	object(o)
+	object
 
 		method f = f
 		method max_threads = max_threads
