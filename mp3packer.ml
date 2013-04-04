@@ -40,7 +40,7 @@ exit 477;;
 
 (*let t1 = Unix.gettimeofday ();;*)
 
-let version = "2.00-248";;
+let version = "2.01-249";;
 
 let padding = Printf.sprintf "mp3packer%s\n" version;;
 
@@ -293,7 +293,9 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 | Some worker_num -> (
 	(* This is being run by another mp3packer; make sure everything is silent *)
 	(* rename_input_ref should NOT be used with this since Linux will just overwrite the other file *)
-	Multiproc.worker worker_num !process_set_ref true
+	(* Actually, ignore this for now *)
+(*	Multiproc.worker worker_num !process_set_ref true*)
+	fun a b -> ()
 )
 | _ when !rename_input_ref -> (
 	(* Rename the input file, and do_queue backwards to update the original filename *)

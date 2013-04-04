@@ -16,6 +16,12 @@
 	Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 *******************************************************************************)
 
+
+
+
+
+
+(********
 open Mp3types;;
 
 (* Just accept pretty much anything *)
@@ -176,7 +182,7 @@ let worker worker_num process_set debug =
 ;;
 
 
-let temp_out_h = Unix.openfile "pipe.bin" [Unix.O_WRONLY;Unix.O_CREAT;Unix.O_TRUNC] 0o640;;
+(*let temp_out_h = Unix.openfile "pipe.bin" [Unix.O_WRONLY;Unix.O_CREAT;Unix.O_TRUNC] 0o640;;*)
 
 
 (* These functions are for the main program to send and receive stuff from the workers *)
@@ -416,4 +422,4 @@ let start_procs num_procs debug =
 *)
 
 
-
+********)
