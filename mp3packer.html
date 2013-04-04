@@ -329,9 +329,10 @@ INFO:
 <p>Note that these options do not affect file size or compatibility at all. It will only change the internal layout of the data in the frames.</p>
 <h3><a name="changelog" id="changelog">Changelog:</a></h3>
 <dl>
+	<dt>2.01 (2012-07-15)</dt>
+    <dd>Removed a debug line causing a file named pipe.bin to be created.</dd>
 	<dt>2.00 (2012-07-14)</dt>
     <dd>Re-made the <code>-z</code> processing to be multi-threaded and use SSE if available.</dd>
-    <dt></dt>
     <dt>1.26 (2012-07-11)</dt>
     <dd>Fixed a problem where deleting a file would fail in many cases.<br />
       Fixed some Windows terminal corruption related to printing Unicode filenames (Unicode names are even less likely to print correctly in the terminal) </dd>
