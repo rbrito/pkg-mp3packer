@@ -1,0 +1,46 @@
+expandarray.cmi: 
+list2.cmi: 
+crc.cmo: 
+crc.cmx: 
+expandarray.cmo: expandarray.cmi 
+expandarray.cmx: expandarray.cmi 
+list2.cmo: list2.cmi 
+list2.cmx: list2.cmi 
+list2_test.cmo: list2.cmi 
+list2_test.cmx: list2.cmx 
+mp3framehuffman.cmo: pack.cmo mp3types.cmo 
+mp3framehuffman.cmx: pack.cmx mp3types.cmx 
+mp3frameutils.cmo: pack.cmo mp3types.cmo mp3framehuffman.cmo 
+mp3frameutils.cmx: pack.cmx mp3types.cmx mp3framehuffman.cmx 
+mp3info.cmo: pack.cmo mp3types.cmo mp3read.cmo expandarray.cmi 
+mp3info.cmx: pack.cmx mp3types.cmx mp3read.cmx expandarray.cmx 
+mp3info_test.cmo: mp3info.cmo 
+mp3info_test.cmx: mp3info.cmx 
+mp3packer.cmo: unicode.cmo mp3write.cmo mp3types.cmo mp3read.cmo mp3queue.cmo \
+    mp3info.cmo 
+mp3packer.cmx: unicode.cmx mp3write.cmx mp3types.cmx mp3read.cmx mp3queue.cmx \
+    mp3info.cmx 
+mp3queue.cmo: pack.cmo mp3types.cmo mp3read.cmo mp3frameutils.cmo list2.cmi \
+    expandarray.cmi crc.cmo 
+mp3queue.cmx: pack.cmx mp3types.cmx mp3read.cmx mp3frameutils.cmx list2.cmx \
+    expandarray.cmx crc.cmx 
+mp3queue_test.cmo: mp3queue.cmo 
+mp3queue_test.cmx: mp3queue.cmx 
+mp3read.cmo: unicode.cmo ptr.cmo pack.cmo mp3types.cmo crc.cmo 
+mp3read.cmx: unicode.cmx ptr.cmx pack.cmx mp3types.cmx crc.cmx 
+mp3reader.cmo: mp3types.cmo mp3read.cmo list2.cmi 
+mp3reader.cmx: mp3types.cmx mp3read.cmx list2.cmx 
+mp3read_test.cmo: mp3types.cmo mp3read.cmo 
+mp3read_test.cmx: mp3types.cmx mp3read.cmx 
+mp3types.cmo: unicode.cmo 
+mp3types.cmx: unicode.cmx 
+mp3write.cmo: unicode.cmo 
+mp3write.cmx: unicode.cmx 
+multiproc.cmo: mp3write.cmo mp3types.cmo mp3read.cmo mp3queue.cmo 
+multiproc.cmx: mp3write.cmx mp3types.cmx mp3read.cmx mp3queue.cmx 
+pack.cmo: 
+pack.cmx: 
+ptr.cmo: 
+ptr.cmx: 
+unicode.cmo: 
+unicode.cmx: 

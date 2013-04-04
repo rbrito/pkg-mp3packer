@@ -344,59 +344,81 @@ CAMLprim value ptr_map_handle(value h_val, value from_val, value len_val, value 
 	len_large.QuadPart = Long_val(len_val);
 
 	h = Handle_val(h_val);
-	h_map = CreateFileMapping(
-		h,
-		NULL,
-		map_access,
-		len_large.HighPart,
-		len_large.LowPart,
-		NULL
-	);
-	if(h_map == NULL) {
-		printf("NULL! %d\n", GetLastError());
-		caml_failwith("CreateFileMapping failed");
+
+	if(len_large.QuadPart == 0) {
+		// Try to get the actual size of the file here
+		if(!GetFileSizeEx(h, &len_large)) {
+			// Hope that something better happens next time
+			len_large.QuadPart = 0;
+		}
+	}
+
+	if(len_large.QuadPart == 0) {
+		// mmaping a 0-length file will fail
+		struct ptr_struct *p;
+		cust = caml_alloc_custom(&generic_ptr_opts, sizeof(struct ptr_struct), 0, 64*1024*1024);
+		p = Struct_val(cust);
+		p->begin = NULL;
+		p->alloc_begin = NULL;
+		p->length = 0;
+		p->align = 0;
+		p->type = PTR_NULL;
 	} else {
-		char *map_ptr;
-		map_ptr = (char *)MapViewOfFile(
-			h_map,
-			view_access,
-			from_large.HighPart,
-			from_large.LowPart,
-			len_large.QuadPart
+
+		h_map = CreateFileMapping(
+			h,
+			NULL,
+			map_access,
+			len_large.HighPart,
+			len_large.LowPart,
+			NULL
 		);
-		if(map_ptr == NULL) {
-			printf("2NULL! %d\n", GetLastError());
-			caml_failwith("MapViewOfFile failed");
+		if(h_map == NULL) {
+			printf("NULL! %d\n", GetLastError());
+			caml_failwith("CreateFileMapping failed");
 		} else {
-			SYSTEM_INFO sysinfo;
-			MEMORY_BASIC_INFORMATION info;
-			SIZE_T ret;
-
-			GetSystemInfo(&sysinfo);
-
-			CloseHandle(h_map);
-
-			ret = VirtualQuery(
-				map_ptr,
-				&info,
-				sizeof(MEMORY_BASIC_INFORMATION)
+			char *map_ptr;
+			map_ptr = (char *)MapViewOfFile(
+				h_map,
+				view_access,
+				from_large.HighPart,
+				from_large.LowPart,
+				len_large.QuadPart
 			);
-			if(ret == 0) {
-				printf("3NULL! %d\n", GetLastError());
-				caml_failwith("VirtualQuery failed");
+			if(map_ptr == NULL) {
+				printf("2NULL! %d\n", GetLastError());
+				caml_failwith("MapViewOfFile failed");
 			} else {
-				// Now make the ptr
-				struct ptr_struct *p;
-//				int i;
-				cust = caml_alloc_custom(&generic_ptr_opts, sizeof(struct ptr_struct), info.RegionSize, 64*1024*1024);
-				p = Struct_val(cust);
-
-				p->begin = map_ptr;
-				p->alloc_begin = map_ptr;
-				p->length = info.RegionSize;
-				p->align = sysinfo.dwPageSize;
-				p->type = PTR_MMAP;
-
+				SYSTEM_INFO sysinfo;
+				MEMORY_BASIC_INFORMATION info;
+				SIZE_T ret;
+	
+				GetSystemInfo(&sysinfo);
+	
+				CloseHandle(h_map);
+	
+				ret = VirtualQuery(
+					map_ptr,
+					&info,
+					sizeof(MEMORY_BASIC_INFORMATION)
+				);
+				if(ret == 0) {
+					printf("3NULL! %d\n", GetLastError());
+					caml_failwith("VirtualQuery failed");
+				} else {
+					// Now make the ptr
+					struct ptr_struct *p;
+	//				int i;
+					cust = caml_alloc_custom(&generic_ptr_opts, sizeof(struct ptr_struct), info.RegionSize, 64*1024*1024);
+					p = Struct_val(cust);
+	
+					p->begin = map_ptr;
+					p->alloc_begin = map_ptr;
+					p->length = info.RegionSize;
+					p->align = sysinfo.dwPageSize;
+					p->type = PTR_MMAP;
+	
+				}
 			}
 		}
 	}
@@ -414,24 +436,36 @@ CAMLprim value ptr_map_handle(value h_val, value from_val, value len_val, value 
 	if(len == 0) {
 		// Windows will map the whole file in this case, which is kind of useful
 		off_t start = lseek(h, 0, SEEK_CUR);
-		len = (size_t)lseek(h, 0, SEEK_END);
+		len = (size_t)lseek(h, 0, SEEK_END) - start;
 		lseek(h, start, SEEK_SET);
 	}
 
-	map_ptr = (char *)mmap(NULL, len, prot, flags, h, from);
-	if(map_ptr == (char *)MAP_FAILED) {
-		printf("Got prot %d, flags %d (wanted %d and %d)\n", prot, flags, PROT_READ, MAP_PRIVATE);
-		caml_failwith("MMAP failed");
-	} else {
+	if(len == 0) {
+		// The file is actually 0-length - use a fake ptr here
 		struct ptr_struct *p;
-		cust = caml_alloc_custom(&generic_ptr_opts, sizeof(struct ptr_struct), len, 64*1024*1024);
+		cust = caml_alloc_custom(&generic_ptr_opts, sizeof(struct ptr_struct), 0, 64*1024*1024);
 		p = Struct_val(cust);
+		p->begin = NULL;
+		p->alloc_begin = NULL;
+		p->length = 0;
+		p->align = 0;
+		p->type = PTR_NULL;
+	} else {
+		map_ptr = (char *)mmap(NULL, len, prot, flags, h, from);
+		if(map_ptr == (char *)MAP_FAILED) {
+			printf("Got prot %d, flags %d (wanted %d and %d)\n", prot, flags, PROT_READ, MAP_PRIVATE);
+			caml_failwith("MMAP failed");
+		} else {
+			struct ptr_struct *p;
+			cust = caml_alloc_custom(&generic_ptr_opts, sizeof(struct ptr_struct), len, 64*1024*1024);
+			p = Struct_val(cust);
 
-		p->begin = map_ptr;
-		p->alloc_begin = map_ptr;
-		p->length = len;
-		p->align = getpagesize();
-		p->type = PTR_MMAP;
+			p->begin = map_ptr;
+			p->alloc_begin = map_ptr;
+			p->length = len;
+			p->align = getpagesize();
+			p->type = PTR_MMAP;
+		}
 	}
 	CAMLreturn(cust);
 #endif // _WIN32 for mmap
@@ -450,6 +484,22 @@ CAMLprim value ptr_flush_map(value ptr_val) {
 	} else {
 		CAMLreturn(Val_bool(FALSE));
 	}
+}
+CAMLprim value ptr_unmap(value ptr_val) {
+	CAMLparam1(ptr_val);
+	if(Type_val(ptr_val) == PTR_MMAP) {
+#ifdef _WIN32
+		UnmapViewOfFile(Alloc_begin_val(ptr_val));
+#else
+		munmap(Alloc_begin_val(ptr_val), Length_val(ptr_val));
+#endif
+		// Now invalidate the ptr
+		Begin_val(ptr_val) = NULL;
+		Alloc_begin_val(ptr_val) = NULL;
+		Length_val(ptr_val) = 0;
+		Type_val(ptr_val) = PTR_NULL;
+	}
+	CAMLreturn0;
 }
 
 

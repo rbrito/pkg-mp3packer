@@ -172,6 +172,7 @@ let get_byte = get_int_of_8u;;
 type map_access_t = Map_cow | Map_read_only | Map_write;;
 external map_handle : Unix.file_descr -> int -> int -> map_access_t -> t = "ptr_map_handle";;
 external flush_map : t -> bool = "ptr_flush_map";;
+external unmap : t -> unit = "ptr_unmap";;
 
 
 (************************)

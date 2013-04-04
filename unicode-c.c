@@ -7,6 +7,7 @@
 #include <caml/custom.h>
 
 //#include "ptr.h"
+#include <stdio.h>
 
 #if defined(__WIN32) || defined(_WIN32) || defined(__WIN32__)
 #ifndef WINVER
@@ -53,6 +54,7 @@ CAMLprim void uni_set_utf8_output() {
 CAMLprim void uni_silly_print(value s) {
 	CAMLparam1(s);
 	wprintf(L"%S", String_val(s));
+	fflush(stdout);
 	CAMLreturn0;
 }
 
@@ -388,12 +390,68 @@ CAMLprim value uni_stat_utf16(value name_val) {
 	CAMLreturn(out_val);
 }
 
+CAMLprim value uni_file_exists_utf16(value name_val) {
+	CAMLparam1(name_val);
+	struct _stati64 buf;
+	int ret;
+	wchar_t *name = (wchar_t *)String_val(name_val);
+	CAMLlocal1(out_val);
 
+	ret = _wstati64(name, &buf);
 
+	CAMLreturn(Val_bool(ret != -1));
+}
+
+CAMLprim value uni_rename_utf16(value path1, value path2)
+{
+	CAMLparam2(path1, path2);
+	static int supports_MoveFileEx = -1; /* don't know yet */
+	wchar_t *wpath1;
+	wchar_t *wpath2;
+	BOOL ok;
+	CAMLlocal1(out_val);
+
+	wpath1 = (wchar_t *)String_val(path1);
+	wpath2 = (wchar_t *)String_val(path2);
+
+	if (supports_MoveFileEx < 0) {
+		OSVERSIONINFO VersionInfo;
+		VersionInfo.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
+		supports_MoveFileEx =
+			(GetVersionEx(&VersionInfo) != 0)
+			&& (VersionInfo.dwPlatformId == VER_PLATFORM_WIN32_NT);
+	}
+  if (supports_MoveFileEx > 0) {
+    ok = MoveFileExW(wpath1, wpath2,
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH |
+                    MOVEFILE_COPY_ALLOWED);
+	} else {
+    ok = MoveFileW(wpath1, wpath2);
+	}
+
+	if(ok) {
+		win_good(out_val, Val_int(0));
+	} else {
+		win_bad(out_val, GetLastError());
+	}
+  CAMLreturn(out_val);
+}
+
+CAMLprim value uni_remove_utf16(value name_val) {
+	CAMLparam1(name_val);
+	CAMLlocal1(out_val);
+	int err = 0;
+
+	if(!DeleteFileW((wchar_t *)String_val(name_val))) {
+		win_bad(out_val, GetLastError());
+	} else {
+		win_good(out_val, Val_int(0));
+	}
+	CAMLreturn(out_val);
+}
 
 #else
 
-#include <stdio.h>
 
 #define RETURN_INVALID {\
 	CAMLlocal1(out_val);\
@@ -469,5 +527,19 @@ CAMLprim value uni_stat_utf16(value name_val) {
 	RETURN_INVALID;
 }
 
+CAMLprim value uni_file_exists_utf16(value name_val) {
+	CAMLparam1(name_val);
+	RETURN_INVALID;
+}
+
+CAMLprim value uni_rename_utf16(value path1, value path2) {
+	CAMLparam2(path1, path2);
+	RETURN_INVALID;
+}
+
+CAMLprim value uni_remove_utf16(value name_val) {
+	CAMLparam1(name_val);
+	RETURN_INVALID;
+}
 #endif
 

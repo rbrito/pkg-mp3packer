@@ -314,6 +314,9 @@ INFO:
 <p>Note that these options do not affect file size or compatibility at all. It will only change the internal layout of the data in the frames.</p>
 <h3><a name="changelog" id="changelog">Changelog:</a></h3>
 <dl>
+	<dt>1.26 (2012-07-11)</dt>
+	<dd>Fixed an issue with Unicode support breaking the command prompt (however, Unicode names will definitinely not print correctly in Windows)<br />
+	Altered the file reading and writing code to give fewer access violations when trying to move / rename files</dd>
 	<dt>1.25 (2012-02-24)</dt>
 	<dd>Support Unicode files and directories (names may not print correctly)<br />Made re-synchronization faster<br />Simple stereo and joint stereo frames are now considered equivalent for re-synchronization</dd>
 	<dt>1.24 (2012-02-16)</dt>
