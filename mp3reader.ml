@@ -130,7 +130,7 @@ let rec grab_frame frame_num = (
 	| Some (_, if_now, (wanted_at, got_at)) -> (
 		let side = side_info_of_if if_now in
 		List2.append frame_offsets side.side_offset;
-		List2.append frame_bits (String.length if_now.if_data_raw lsl 3);
+		List2.append frame_bits (Ptr.Ref.length if_now.if_data_raw lsl 3);
 		List2.append frame_bits_used (Array.fold_left (+) 0 side.side_bits);
 		List2.append frame_bitrate if_now.if_header.header_bitrate;
 		grab_frame (succ frame_num)

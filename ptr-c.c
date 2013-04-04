@@ -18,7 +18,9 @@
 //#define enter_blocking_section()
 //#define leave_blocking_section()
 
-
+#ifdef _WIN32
+#define HAS_BYTESWAP 1
+#endif
 
 
 /*
@@ -312,6 +314,55 @@ CAMLprim value ptr_get_float_of_64(value ptr_val, value offset_val) {
 	CAMLreturn(out_val);
 }
 
+// Byte swap functions
+// Apparently CAMLparamX is only needed if a heap allocation takes place before a heap access
+CAMLprim void ptr_put_16_of_int_bswap(value ptr_val, value offset_val, value put_val) {
+	uint16_t *loc = (uint16_t *)(Begin_val(ptr_val) + Long_val(offset_val));
+	uint16_t put = Int_val(put_val);
+	// It looks like _byteswap_ushort just maps to a 16-bit rotate, so use a more portable version
+	// It should map the exact same way
+	put = (((put & 0x00FF) << 8) | ((put & 0xFF00) >> 8));
+	*loc = put;
+}
+
+CAMLprim void ptr_put_32_of_int_bswap(value ptr_val, value offset_val, value put_val) {
+	uint32 *loc = (uint32 *)(Begin_val(ptr_val) + Long_val(offset_val));
+	uint32 put = Int_val(put_val);
+#if HAS_BYTESWAP
+	put = _byteswap_ulong(put);
+#else
+	put = (((put & 0x0000FFFF) << 16) | ((put & 0xFFFF0000) >> 16));
+	put = (((put & 0x00FF00FF) <<  8) | ((put & 0xFF00FF00) >>  8));
+#endif
+	*loc = put;
+}
+
+// bswap only works on ints, so we have to go double -> float -> int
+CAMLprim void ptr_put_32_of_float_bswap(value ptr_val, value offset_val, value put_val) {
+	uint32 *loc = (uint32 *)(Begin_val(ptr_val) + Long_val(offset_val));
+	float put_float = Double_val(put_val);
+	uint32 put = *((uint32 *)(&put_float));
+#if HAS_BYTESWAP
+	put = _byteswap_ulong(put);
+#else
+	put = (((put & 0x0000FFFF) << 16) | ((put & 0xFFFF0000) >> 16));
+	put = (((put & 0x00FF00FF) <<  8) | ((put & 0xFF00FF00) >>  8));
+#endif
+	*loc = put;
+}
+
+CAMLprim value ptr_get_int_of_32u_bswap(value ptr_val, value offset_val) {
+	uint32 *loc = (uint32 *)(Begin_val(ptr_val) + Long_val(offset_val));
+	uint32 got = loc[0];
+#if HAS_BYTESWAP
+	got = _byteswap_ulong(got);
+#else
+// GCC has __builtin_bswap32, but the assembly doesn't look too much better
+	got = (((got & 0x0000FFFF) << 16) | ((got & 0xFFFF0000) >> 16));
+	got = (((got & 0x00FF00FF) <<  8) | ((got & 0xFF00FF00) >>  8));
+#endif
+	return(Val_int(got));
+}
 
 
 
@@ -335,7 +386,7 @@ CAMLprim value ptr_map_handle(value h_val, value from_val, value len_val, value 
 	HANDLE h;
 	HANDLE h_map;
 	ULARGE_INTEGER from_large;
-	ULARGE_INTEGER len_large;
+	LARGE_INTEGER len_large;
 	DWORD map_access = map_access_array[Int_val(access_val)];
 	DWORD view_access = view_access_array[Int_val(access_val)];
 	CAMLlocal1(cust);
@@ -344,17 +395,12 @@ CAMLprim value ptr_map_handle(value h_val, value from_val, value len_val, value 
 	len_large.QuadPart = Long_val(len_val);
 
 	h = Handle_val(h_val);
-
 	if(len_large.QuadPart == 0) {
-		// Try to get the actual size of the file here
 		if(!GetFileSizeEx(h, &len_large)) {
-			// Hope that something better happens next time
 			len_large.QuadPart = 0;
 		}
 	}
-
 	if(len_large.QuadPart == 0) {
-		// mmaping a 0-length file will fail
 		struct ptr_struct *p;
 		cust = caml_alloc_custom(&generic_ptr_opts, sizeof(struct ptr_struct), 0, 64*1024*1024);
 		p = Struct_val(cust);
@@ -364,60 +410,59 @@ CAMLprim value ptr_map_handle(value h_val, value from_val, value len_val, value 
 		p->align = 0;
 		p->type = PTR_NULL;
 	} else {
-
-		h_map = CreateFileMapping(
-			h,
-			NULL,
-			map_access,
-			len_large.HighPart,
-			len_large.LowPart,
-			NULL
+	h_map = CreateFileMapping(
+		h,
+		NULL,
+		map_access,
+		len_large.HighPart,
+		len_large.LowPart,
+		NULL
+	);
+	if(h_map == NULL) {
+//		printf("NULL! %d\n", GetLastError());
+		caml_failwith("CreateFileMapping failed");
+	} else {
+		char *map_ptr;
+		map_ptr = (char *)MapViewOfFile(
+			h_map,
+			view_access,
+			from_large.HighPart,
+			from_large.LowPart,
+			len_large.QuadPart
 		);
-		if(h_map == NULL) {
-			printf("NULL! %d\n", GetLastError());
-			caml_failwith("CreateFileMapping failed");
+		if(map_ptr == NULL) {
+//			printf("2NULL! %d\n", GetLastError());
+			caml_failwith("MapViewOfFile failed");
 		} else {
-			char *map_ptr;
-			map_ptr = (char *)MapViewOfFile(
-				h_map,
-				view_access,
-				from_large.HighPart,
-				from_large.LowPart,
-				len_large.QuadPart
+			SYSTEM_INFO sysinfo;
+			MEMORY_BASIC_INFORMATION info;
+			SIZE_T ret;
+
+			GetSystemInfo(&sysinfo);
+
+			CloseHandle(h_map);
+
+			ret = VirtualQuery(
+				map_ptr,
+				&info,
+				sizeof(MEMORY_BASIC_INFORMATION)
 			);
-			if(map_ptr == NULL) {
-				printf("2NULL! %d\n", GetLastError());
-				caml_failwith("MapViewOfFile failed");
+			if(ret == 0) {
+//				printf("3NULL! %d\n", GetLastError());
+				caml_failwith("VirtualQuery failed");
 			} else {
-				SYSTEM_INFO sysinfo;
-				MEMORY_BASIC_INFORMATION info;
-				SIZE_T ret;
-	
-				GetSystemInfo(&sysinfo);
-	
-				CloseHandle(h_map);
-	
-				ret = VirtualQuery(
-					map_ptr,
-					&info,
-					sizeof(MEMORY_BASIC_INFORMATION)
-				);
-				if(ret == 0) {
-					printf("3NULL! %d\n", GetLastError());
-					caml_failwith("VirtualQuery failed");
-				} else {
-					// Now make the ptr
-					struct ptr_struct *p;
-	//				int i;
-					cust = caml_alloc_custom(&generic_ptr_opts, sizeof(struct ptr_struct), info.RegionSize, 64*1024*1024);
-					p = Struct_val(cust);
-	
-					p->begin = map_ptr;
-					p->alloc_begin = map_ptr;
-					p->length = info.RegionSize;
-					p->align = sysinfo.dwPageSize;
-					p->type = PTR_MMAP;
-	
+				// Now make the ptr
+				struct ptr_struct *p;
+//				int i;
+				cust = caml_alloc_custom(&generic_ptr_opts, sizeof(struct ptr_struct), info.RegionSize, 64*1024*1024);
+				p = Struct_val(cust);
+
+				p->begin = map_ptr;
+				p->alloc_begin = map_ptr;
+				p->length = info.RegionSize;
+				p->align = sysinfo.dwPageSize;
+				p->type = PTR_MMAP;
+
 				}
 			}
 		}
@@ -441,7 +486,6 @@ CAMLprim value ptr_map_handle(value h_val, value from_val, value len_val, value 
 	}
 
 	if(len == 0) {
-		// The file is actually 0-length - use a fake ptr here
 		struct ptr_struct *p;
 		cust = caml_alloc_custom(&generic_ptr_opts, sizeof(struct ptr_struct), 0, 64*1024*1024);
 		p = Struct_val(cust);
@@ -453,7 +497,7 @@ CAMLprim value ptr_map_handle(value h_val, value from_val, value len_val, value 
 	} else {
 		map_ptr = (char *)mmap(NULL, len, prot, flags, h, from);
 		if(map_ptr == (char *)MAP_FAILED) {
-			printf("Got prot %d, flags %d (wanted %d and %d)\n", prot, flags, PROT_READ, MAP_PRIVATE);
+//			printf("Got prot %d, flags %d (wanted %d and %d)\n", prot, flags, PROT_READ, MAP_PRIVATE);
 			caml_failwith("MMAP failed");
 		} else {
 			struct ptr_struct *p;
@@ -485,7 +529,7 @@ CAMLprim value ptr_flush_map(value ptr_val) {
 		CAMLreturn(Val_bool(FALSE));
 	}
 }
-CAMLprim value ptr_unmap(value ptr_val) {
+CAMLprim void ptr_unmap(value ptr_val) {
 	CAMLparam1(ptr_val);
 	if(Type_val(ptr_val) == PTR_MMAP) {
 #ifdef _WIN32
@@ -501,7 +545,17 @@ CAMLprim value ptr_unmap(value ptr_val) {
 	}
 	CAMLreturn0;
 }
-
+/*
+CAMLprim value ptr_create_shared_memory(value name_val) {
+	CAMLparam1(name_val);
+	CAMLlocal1(h_val);
+#ifdef _WIN32
+	;
+#else
+#endif
+	CAMLreturn(h_val);
+}
+*/
 
 /************************/
 /* UNIXY FILE FUNCTIONS */
@@ -512,6 +566,7 @@ CAMLprim value ptr_read(value fd, value ptr, value ofs, value len, value really_
 	CAMLparam5(fd, ptr, ofs, len, really_val);
 	CAMLxparam1(pos_or_negative_val);
 	DWORD num_bytes;
+	DWORD passed_num_bytes;
 	DWORD num_read;
 	DWORD total_bytes = 0;
 	DWORD err = 0;
@@ -539,7 +594,7 @@ CAMLprim value ptr_read(value fd, value ptr, value ofs, value len, value really_
 //		printf("Offest is %08X:%08X\n", o.OffsetHigh, o.Offset);
 	}
 
-	num_bytes = Long_val(len);
+	num_bytes = passed_num_bytes = Long_val(len);
 	if(Descr_kind_val(fd) == KIND_SOCKET) {
 		int ret;
 		SOCKET s = Socket_val(fd);
@@ -551,13 +606,14 @@ CAMLprim value ptr_read(value fd, value ptr, value ofs, value len, value really_
 				err = WSAGetLastError();
 				break;
 			}
-			total_bytes += ret; c += num_bytes;
+			total_bytes += ret; c += ret;
+			num_bytes -= ret;
 			// Messy, but whatever
-			if(really && ret == 0 && total_bytes != num_bytes) {
+			if(really && ret == 0 && num_bytes != 0) {
 				err = ERROR_HANDLE_EOF;
 				break;
 			}
-		} while(really && total_bytes < num_bytes);
+		} while(really && num_bytes > 0);
 		leave_blocking_section();
 
 		num_read = ret;
@@ -571,11 +627,12 @@ CAMLprim value ptr_read(value fd, value ptr, value ofs, value len, value really_
 				break;
 			}
 			total_bytes += num_read; c += num_read;
+			num_bytes -= num_read;
 			// OOPS! I forgot to update the overlapped structure here!
 			if(o_star != NULL) {
 				o_star->Offset += num_read;
 			}
-		} while(really && total_bytes < num_bytes);
+		} while(really && num_bytes > 0);
 		leave_blocking_section();
 
 	}
@@ -641,6 +698,7 @@ CAMLprim value ptr_read_bytecode(value *argv, int argn) {
 CAMLprim value ptr_write(value fd, value ptr, value ofs, value len, value really_val, value pos_or_negative_val) {
 	CAMLparam5(fd, ptr, ofs, len, really_val);
 	CAMLxparam1(pos_or_negative_val);
+	DWORD passed_num_bytes;
 	DWORD num_bytes;
 	DWORD num_wrote;
 	DWORD total_bytes = 0;
@@ -667,7 +725,7 @@ CAMLprim value ptr_write(value fd, value ptr, value ofs, value len, value really
 		o_star = &o;
 	}
 
-	num_bytes = Long_val(len);
+	num_bytes = passed_num_bytes = Long_val(len);
 	if(Descr_kind_val(fd) == KIND_SOCKET) {
 		int ret;
 		SOCKET s = Socket_val(fd);
@@ -681,12 +739,13 @@ CAMLprim value ptr_write(value fd, value ptr, value ofs, value len, value really
 			}
 			// XXX XXX XXX I FORGOT THIS LINE IN OTHER VERSIONS!!! XXX XXX XXX
 			total_bytes += ret; c += ret;
+			num_bytes -= ret;
 			if(really && ret == 0 && total_bytes != num_bytes) {
 				// Wrote nothing
 				err = ERROR_HANDLE_EOF;
 				break;
 			}
-		} while(really && total_bytes < num_bytes);
+		} while(really && num_bytes > 0);
 		leave_blocking_section();
 
 		num_wrote = ret;
@@ -700,13 +759,14 @@ CAMLprim value ptr_write(value fd, value ptr, value ofs, value len, value really
 				break;
 			}
 			total_bytes += num_wrote; c += num_wrote;
-		} while(really && total_bytes < num_bytes);
+			num_bytes -= num_wrote;
+		} while(really && num_bytes > 0);
 		leave_blocking_section();
 
 	}
 	if(err) {
 		win32_maperr(err);
-		printf("FAILED WITH WINDOWS ERROR %d\n", err);
+//		printf("FAILED WITH WINDOWS ERROR %d\n", err);
 		uerror("Ptr.write", Nothing);
 	}
 	CAMLreturn(Val_int(total_bytes));

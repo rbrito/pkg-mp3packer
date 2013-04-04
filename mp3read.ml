@@ -21,14 +21,67 @@ open Mp3types;;
 open Pack;;
 
 
-(* This function has to be here in order to take advantage of both mp3types and pack *)
-let side_info_of_if f = (
-	let side = f.if_side_raw in
-	match (f.if_header.header_id, f.if_header.header_channel_mode) with
+let header_of_ptrref debug r =
+	if Ptr.Ref.length r < 4 then None else (
+		try
+			let b = Ptr.Ref.get_bits r in
+			if b 0 11 <> 0x7FF then (if debug then printf " SYNC'S WRONG\n"; raise Not_found);
+
+			let id_index = b 11 2 in
+			if id_index = 1 then (if debug then printf " ID'S WRONG\n"; raise Not_found);
+			let id = mpeg_index.(id_index) in
+
+			if b 13 2 <> 1 then (if debug then printf " LAYER'S NOT 3\n"; raise Not_found);
+
+			let crc = (b 15 1 = 0) in
+
+			let (bitrate, samplerate) =
+				let bitrate_index = b 16 4 in
+				let samplerate_index = b 20 2 in
+				if bitrate_index = 0 || bitrate_index = 15 then (if debug then printf " INVALID BITRATE\n"; raise Not_found);
+				if samplerate_index = 3 then (if debug then printf " INVALID SAMPLERATE\n"; raise Not_found);
+				match id with
+				| MPEG1  -> ([| 0;32;40;48;56;64;80;96;112;128;160;192;224;256;320 |].(bitrate_index), [| S44100;S48000;S32000 |].(samplerate_index))
+				| MPEG2  -> ([| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |].(bitrate_index), [| S22050;S24000;S16000 |].(samplerate_index))
+				| MPEG25 -> ([| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |].(bitrate_index), [| S11025;S12000; S8000 |].(samplerate_index))
+			in
+			let padding = (b 22 1 = 1) in
+			let priv = (b 23 1 = 1) in
+			let channel_mode = channel_index.(b 24 2) in
+			let ms = (b 26 1 = 1) in
+			let is = (b 27 1 = 1) in
+			let copyright = (b 28 1 = 1) in
+			let original = (b 29 1 = 1) in
+			let emphasis = emphasis_index.(b 30 2) in
+			Some {
+				header_raw = r;
+				header_id = id;
+				header_crc = crc;
+				header_bitrate = bitrate;
+				header_samplerate = samplerate;
+				header_padding = padding;
+				header_private = priv;
+				header_channel_mode = channel_mode;
+				header_ms = ms;
+				header_is = is;
+				header_copyright = copyright;
+				header_original = original;
+				header_emphasis = emphasis;
+			}
+		with
+		| Not_found -> None
+	)
+;;
+
+
+
+let side_info_of_header header side =
+	let gb = Ptr.Ref.get_bits side in
+	match (header.header_id, header.header_channel_mode) with
 	| (MPEG1, ChannelMono) -> (
-		let off = unpackBits side 0 9 in
-		let g1 = unpackBits side 18 12 in
-		let g2 = unpackBits side 77 12 in
+		let off = gb 0 9 in
+		let g1 = gb 18 12 in
+		let g2 = gb 77 12 in
 		{
 			side_raw = side;
 			side_offset = off;
@@ -37,11 +90,11 @@ let side_info_of_if f = (
 		}
 	)
 	| (MPEG1, _) -> (
-		let off = unpackBits side 0 9 in
-		let g1 = unpackBits side  20 12 in
-		let g2 = unpackBits side  79 12 in
-		let g3 = unpackBits side 138 12 in
-		let g4 = unpackBits side 197 12 in
+		let off = gb 0 9 in
+		let g1 = gb  20 12 in
+		let g2 = gb  79 12 in
+		let g3 = gb 138 12 in
+		let g4 = gb 197 12 in
 		{
 			side_raw = side;
 			side_offset = off;
@@ -50,8 +103,8 @@ let side_info_of_if f = (
 		}
 	)
 	| (_, ChannelMono) -> (
-		let off = unpackBits side 0 8 in
-		let g1 = unpackBits side  9 12 in
+		let off = gb 0 8 in
+		let g1 = gb  9 12 in
 		{
 			side_raw = side;
 			side_offset = off;
@@ -60,10 +113,66 @@ let side_info_of_if f = (
 		}
 	)
 	| (_, _) -> (
-		let off = unpackBits side 0 8 in
-		let g1 = unpackBits side 10 12 in
-		let g2 = unpackBits side 73 12 in
+		let off = gb 0 8 in
+		let g1 = gb 10 12 in
+		let g2 = gb 73 12 in
 		{
+			side_raw = side;
+			side_offset = off;
+			side_bits = [| g1; g2 |];
+			side_bytes = (g1 + g2 + 7) asr 3;
+		}
+	)
+;;
+
+(* This function has to be here in order to take advantage of both mp3types and pack *)
+let side_info_of_if f = (
+	let side = f.if_side_raw in
+	let gb = Ptr.Ref.get_bits side in
+	match (f.if_header.header_id, f.if_header.header_channel_mode) with
+	| (MPEG1, ChannelMono) -> (
+		let off = gb 0 9 in
+		let g1 = gb 18 12 in
+		let g2 = gb 77 12 in
+		{
+(*			side_raw_string = f.if_side_string;*)
+			side_raw = side;
+			side_offset = off;
+			side_bits = [| g1; g2 |];
+			side_bytes = (g1 + g2 + 7) asr 3;
+		}
+	)
+	| (MPEG1, _) -> (
+		let off = gb 0 9 in
+		let g1 = gb  20 12 in
+		let g2 = gb  79 12 in
+		let g3 = gb 138 12 in
+		let g4 = gb 197 12 in
+		{
+(*			side_raw_string = f.if_side_string;*)
+			side_raw = side;
+			side_offset = off;
+			side_bits = [| g1; g2; g3; g4 |];
+			side_bytes = (g1 + g2 + g3 + g4 + 7) asr 3;
+		}
+	)
+	| (_, ChannelMono) -> (
+		let off = gb 0 8 in
+		let g1 = gb  9 12 in
+		{
+(*			side_raw_string = f.if_side_string;*)
+			side_raw = side;
+			side_offset = off;
+			side_bits = [| g1 |];
+			side_bytes = (g1 + 7) asr 3;
+		}
+	)
+	| (_, _) -> (
+		let off = gb 0 8 in
+		let g1 = gb 10 12 in
+		let g2 = gb 73 12 in
+		{
+(*			side_raw_string = f.if_side_string;*)
 			side_raw = side;
 			side_offset = off;
 			side_bits = [| g1; g2 |];
@@ -110,44 +219,47 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 		method virtual pos : int
 		method virtual length : int
 		method virtual read : string -> int -> int -> unit
+		method virtual read_ptrref : int -> Ptr.Ref.ref_t
 		method virtual close : unit
+(*		method virtual unix_handle : Unix.file_descr (* There should be a better way to do this *)*)
 
-		(* Take a string and return Some xyz if it's a valid header string, None otherwise *)
-		method header_of_string s = (
-			if String.length s < 4 then None else (
-				let a = Char.code s.[0] in
-				let b = Char.code s.[1] in
-				let c = Char.code s.[2] in
-				let d = Char.code s.[3] in
+		(* Take a Ptr.Ref.t and return Some xyz if it's a valid header string, None otherwise *)
+		method header_of_ptrref = header_of_ptrref debug
+(*
+		method header_of_ptrref r = (
+			if Ptr.Ref.length r < 4 then None else (
 				try
-					if a <> 255 || b < 224 then (if debug then printf " SYNC'S WRONG\n"; raise Not_found);
+					let b = Ptr.Ref.get_bits r in
+					if b 0 11 <> 0x7FF then (if debug then printf " SYNC'S WRONG\n"; raise Not_found);
 
-					let id = mpeg_index.(b lsr 3 land 3) in
-					if b lsr 3 land 3 = 1 then (if debug then printf " ID'S WRONG\n"; raise Not_found);
+					let id_index = b 11 2 in
+					if id_index = 1 then (if debug then printf " ID'S WRONG\n"; raise Not_found);
+					let id = mpeg_index.(id_index) in
 
-					if b lsr 1 land 3 <> 1 then (if debug then printf " LAYER'S NOT 3\n"; raise Not_found);
+					if b 13 2 <> 1 then (if debug then printf " LAYER'S NOT 3\n"; raise Not_found);
 
-					let crc = (b land 1 = 0) in (* CRC is present if this is a ONE! *)
-					let (bitrate, samplerate) = (
-						let bitrate_index = c lsr 4 land 15 in
-						let samplerate_index = c lsr 2 land 3 in
+					let crc = (b 15 1 = 0) in
+
+					let (bitrate, samplerate) =
+						let bitrate_index = b 16 4 in
+						let samplerate_index = b 20 2 in
 						if bitrate_index = 0 || bitrate_index = 15 then (if debug then printf " INVALID BITRATE\n"; raise Not_found);
 						if samplerate_index = 3 then (if debug then printf " INVALID SAMPLERATE\n"; raise Not_found);
 						match id with
 						| MPEG1  -> ([| 0;32;40;48;56;64;80;96;112;128;160;192;224;256;320 |].(bitrate_index), [| S44100;S48000;S32000 |].(samplerate_index))
 						| MPEG2  -> ([| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |].(bitrate_index), [| S22050;S24000;S16000 |].(samplerate_index))
 						| MPEG25 -> ([| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |].(bitrate_index), [| S11025;S12000; S8000 |].(samplerate_index))
-					) in
-					let padding = (c land 2 = 2) in
-					let priv = (c land 1 = 1) in (* The word "private" is reserved in OCaml... *)
-					let channel_mode = channel_index.(d lsr 6 land 3) in
-					let ms = (d land 32 = 32) in
-					let is = (d land 16 = 16) in
-					let copyright = (d land 8 = 8) in
-					let original = (d land 4 = 4) in
-					let emphasis = emphasis_index.(d land 3) in
+					in
+					let padding = (b 22 1 = 1) in
+					let priv = (b 23 1 = 1) in
+					let channel_mode = channel_index.(b 24 2) in
+					let ms = (b 26 1 = 1) in
+					let is = (b 27 1 = 1) in
+					let copyright = (b 28 1 = 1) in
+					let original = (b 29 1 = 1) in
+					let emphasis = emphasis_index.(b 30 2) in
 					Some {
-						header_raw = String.sub s 0 4;
+						header_raw = r;
 						header_id = id;
 						header_crc = crc;
 						header_bitrate = bitrate;
@@ -165,21 +277,21 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 				| Not_found -> None
 			)
 		)
-
+*)
 		(* Get a frame at the current pos_in, assuming it satisfies the requirements *)
 		method get_frame_here reqs = (
 			let start_pos = o#pos in
 			let return_none () = (o#seek start_pos; Fp_none) in
 			if debug then printf "get_frame_here at %d\n" start_pos;
 			try
-				let header_string = String.create 4 in
-				(try
-					o#read header_string 0 4
+(*				let header_string = String.create 4 in*)
+				let header_ptrref = (try
+					o#read_ptrref 4
 				with
 					End_of_file -> (if debug then printf "Got EOF reading frame header\n"; raise Not_found)
-				);
-				if debug then printf " Got bytes %s\n" (to_hex header_string);
-				match o#header_of_string header_string with
+				) in
+				if debug then printf " Got bytes %s\n" (Ptr.Ref.to_HEX header_ptrref);
+				match o#header_of_ptrref header_ptrref with
 				| None -> (
 					if debug then printf " SYNC ERROR AT %d\n" (o#pos - 4);
 					Fp_none
@@ -205,23 +317,32 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 						let frame_length = frame_length_of_header header in
 						let side_info_size = match (header.header_id, header.header_channel_mode) with
 							| (MPEG1, ChannelMono) -> 17
-							| (  _  , ChannelMono) -> 9
+							| (  _  , ChannelMono) ->  9
 							| (MPEG1,      _     ) -> 32
 							| (  _  ,      _     ) -> 17
 						in
 						let data_raw_pos = (if header.header_crc then 6 else 4) + side_info_size in
-						let frame_raw = String.create frame_length in
-						String.blit header_string 0 frame_raw 0 4; (* Copy the header to the frame string *)
-						o#read frame_raw 4 (frame_length - 4);
+
+(*
+						let frame_string = String.create frame_length in
+						String.blit header_string 0 frame_string 0 4; (* Copy the header to the frame string *)
+						o#read frame_string 4 (frame_length - 4);
+*)
+						let after_header = o#read_ptrref (frame_length - 4) in
+						let frame = Ptr.Ref.append header_ptrref after_header in
+						let frame_string = Ptr.Ref.to_string frame in
+
 
 						if debug then printf " Found requested frame from %d to %d\n" start_pos o#pos;
 
 						Fp_some {
-							if_header    = header;
-							if_side_raw  = String.sub frame_raw (if header.header_crc then 6 else 4) side_info_size;
-							if_data_raw  = String.sub frame_raw data_raw_pos (frame_length - data_raw_pos);
-							if_frame_raw = frame_raw;
-							if_xing      = None;
+							if_header       = header;
+(*							if_side_string  = Ptr.Ref.to_string (Ptr.Ref.sub frame (if header.header_crc then 6 else 4) side_info_size);*)
+							if_side_raw     = Ptr.Ref.sub frame (if header.header_crc then 6 else 4) side_info_size;
+(*							if_data_string  = String.sub frame_string data_raw_pos (frame_length - data_raw_pos);*)
+							if_data_raw     = Ptr.Ref.sub frame data_raw_pos (frame_length - data_raw_pos);
+							if_frame_string = frame_string;
+							if_xing         = None;
 						}
 					) else (
 						(* No match found *)
@@ -335,7 +456,7 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 
 if debug then (
 	let h = f.if_header in
-	printf " \"%s\"\n" (to_hex h.header_raw);
+	printf " \"%s\"\n" (Ptr.Ref.to_HEX h.header_raw);
 	printf "  ID: %s\n" (string_of_mpeg h.header_id);
 	printf "  CRC? %B\n" h.header_crc;
 	printf "  Bitrate: %d\n" h.header_bitrate;
@@ -348,14 +469,14 @@ if debug then (
 	printf "  Copyright? %B\n" h.header_copyright;
 	printf "  Original? %B\n" h.header_original;
 	printf "  Emphasis: %s\n" (string_of_emphasis h.header_emphasis);
-	printf " Side:  \"%s\"\n" (to_hex f.if_side_raw);
-	printf " Data:  \"%s\"\n" (to_hex f.if_data_raw);
-	printf " Frame: \"%s\"\n" (to_hex f.if_frame_raw);
+	printf " Side:  \"%s\"\n" (Ptr.Ref.to_HEX f.if_side_raw);
+	printf " Data:  \"%s\"\n" (Ptr.Ref.to_HEX f.if_data_raw);
+	printf " Frame: \"%s\"\n" (to_hex f.if_frame_string);
 );
 
 				(* Update the frame bounds *)
 				first_frame_start <- min first_frame_start (snd resync_needed);
-				last_frame_end <- max last_frame_end ((snd resync_needed) + String.length f.if_frame_raw - 1);
+				last_frame_end <- max last_frame_end ((snd resync_needed) + String.length f.if_frame_string - 1);
 
 				if lame_search then (
 					(* Convert the frame into an XING frame, if possible *)
@@ -366,13 +487,13 @@ if debug then (
 								then num
 								else count_zeros frame_raw (succ now) (succ num)
 						) in
-						let num_zeros = count_zeros f.if_frame_raw 6 0 in
+						let num_zeros = count_zeros f.if_frame_string 6 0 in
 						if num_zeros < 7 || num_zeros > 32 then (if debug then printf " XING search found %d zeros (not between 7 and 32)\n" num_zeros; raise Not_found);
-						if num_zeros + 10 > String.length f.if_frame_raw then (if debug then printf " XING search found %d bytes in frame; not long enough for XING\n" (String.length f.if_frame_raw); raise Not_found); (* Frame is too short to have an XING tag *)
-						let tag_type = String.sub f.if_frame_raw (num_zeros + 6) 4 in
+						if num_zeros + 10 > String.length f.if_frame_string then (if debug then printf " XING search found %d bytes in frame; not long enough for XING\n" (String.length f.if_frame_string); raise Not_found); (* Frame is too short to have an XING tag *)
+						let tag_type = String.sub f.if_frame_string (num_zeros + 6) 4 in
 						if tag_type <> "Xing" && tag_type <> "Info" then (if debug then printf " XING search found unknown tag type %S\n" tag_type; raise Not_found);
 
-						let tag_guts = String.sub f.if_frame_raw (num_zeros + 10) (String.length f.if_frame_raw - num_zeros - 10) in
+						let tag_guts = String.sub f.if_frame_string (num_zeros + 10) (String.length f.if_frame_string - num_zeros - 10) in
 
 						let tag_pos_ref = ref 4 in (* Where we are in the tag. Pretend that the flags have already been read (0 is right AFTER "Xing" or "Info") *)
 
@@ -442,7 +563,7 @@ if debug then (
 											true
 										) else (
 											let tag_crc = unpackn lame_part 34 in
-											let real_crc = Crc.create (String.sub f.if_frame_raw 0 (num_zeros + 10 + from_name + 34)) 0 in
+											let real_crc = Crc.create (String.sub f.if_frame_string 0 (num_zeros + 10 + from_name + 34)) 0 in
 											if debug then printf " Written CRC is %04X, real CRC is %04X\n" tag_crc real_crc;
 											tag_crc = real_crc
 										)
@@ -587,6 +708,11 @@ class mp3read_unix ?debug in_file =
 				)
 			)
 		)
+		method read_ptrref l = (
+			let s = String.create l in
+			o#read s 0 l;
+			Ptr.Ref.of_string s
+		)
 		method close = Unix.close handle
 	end
 ;;
@@ -623,6 +749,17 @@ class mp3read_ptr ?debug in_file =
 			Unix.close handle;
 		)
 
+		method read_ptrref l = (
+			if pos + l > len then (
+				pos <- len;
+				raise End_of_file
+			) else (
+				let ret = Ptr.Ref.of_subptr ptr pos l in
+				pos <- pos + l;
+				ret
+			)
+		)
+
 		initializer (
 			ptr <- Ptr.map_handle handle 0 0 Ptr.Map_read_only;
 			len <- Unix.lseek handle 0 Unix.SEEK_END;
@@ -630,6 +767,43 @@ class mp3read_ptr ?debug in_file =
 	end
 ;;
 
+
+class mp3read_ptr_only ?debug ptr len =
+	object(o)
+		inherit virt_mp3read ?debug:debug
+
+		val mutable pos = 0
+
+		method seek i = pos <- i
+		method pos = pos
+		method length = len
+		method read s r l = (
+			if l = 0 then (
+				()
+			) else if pos < 0 || l < 0 then (
+				invalid_arg (Printf.sprintf "mp3read_ptr#read %d %d from %d (File length %d)" r l pos len)
+			) else if pos + l > len then (
+				raise End_of_file
+			) else (
+				Ptr.blit_to_string ptr pos s r l;
+				pos <- pos + l;
+			)
+		)
+		method close = ()
+
+		method read_ptrref l = (
+			if pos + l > len then (
+				pos <- len;
+				raise End_of_file
+			) else (
+				let ret = Ptr.Ref.of_subptr ptr pos l in
+				pos <- pos + l;
+				ret
+			)
+		)
+
+	end
+;;
 
 (*
 ## Side info:

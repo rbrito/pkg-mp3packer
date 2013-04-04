@@ -69,9 +69,22 @@ let create str initial =
 ;;
 
 
+let create_subptr ptr off len initial =
+	let crc_ref = ref initial in (* 0 for the LAME header *)
+	for i = off to off + len - 1 do
+		update_reference (Ptr.get_byte ptr i) crc_ref
+	done;
+	!crc_ref
+;;
 
-
-
+let create_ptrref r initial =
+	let crc_ref = ref initial in
+	let iter_me _ () ptr off len =
+		crc_ref := create_subptr ptr off len !crc_ref
+	in
+	Ptr.Ref.iter iter_me () r;
+	!crc_ref
+;;
 
 
 

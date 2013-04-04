@@ -25,10 +25,48 @@ open Mp3types;;
 open Pack;;
 open Mp3framehuffman;;
 
-(*
-let debug = true;;
-let debug_out = false || debug;;
-*)
+
+
+let get_seq = if true then Ptr.Ref.get_seq_fast else Ptr.Ref.get_seq;;
+
+let get_huffman_c = false;;
+
+
+
+(***********)
+(* C STUBS *)
+(***********)
+
+external find_best_config       : Ptr.t -> Ptr.t -> Ptr.t -> Ptr.t -> bool -> (int * int * int * int * int * int * int * bool) = "mfu_find_best_config";;
+external find_best_config_sse41 : Ptr.t -> Ptr.t -> Ptr.t -> Ptr.t -> bool -> (int * int * int * int * int * int * int * bool) = "mfu_find_best_config_sse41";;
+
+let first_tick_ref = ref 0;;
+let last_tick_ref = ref 0;;
+
+let update_ref () = last_tick_ref := counter ();;
+let acc_ref here =
+	let a = counter () in
+	here := !here - !last_tick_ref + a;
+	last_tick_ref := a;
+;;
+let get_total () = !last_tick_ref - !first_tick_ref;;
+
+
+let print_stuff_ticks_ref = ref 0;;
+let outside_ticks_ref = ref 0;;
+let before_c_ticks_ref = ref 0;;
+let in_c_ticks_ref = ref 0;;
+let after_c_ticks_ref = ref 0;;
+let before_decode_ticks_ref = ref 0;;
+let decode_scf_ticks_ref = ref 0;;
+let before_decode_quant_ticks_ref = ref 0;;
+let decode_big_quant_ticks_ref = ref 0;;
+let decode_part1_quant_ticks_ref = ref 0;;
+let decode_quant_ticks_ref = ref 0;;
+let decode_ticks_ref = ref 0;;
+let encode_ticks_ref = ref 0;;
+
+
 let debug_more = true;;
 
 let tab = " ";;
@@ -62,6 +100,52 @@ let global_scalefactors sfreq is_short = match (sfreq, is_short) with
 	| (S12000, true ) -> [| 0;4; 8;12;18;26;36;48; 62; 80;104;134;174;192 |]
 	| (S11025, true ) -> [| 0;4; 8;12;18;26;36;48; 62; 80;104;134;174;192 |]
 	| ( S8000, true ) -> [| 0;8;16;24;36;52;72;96;124;160;162;164;166;192 |]
+;;
+let global_scalefactors_ptr =
+	let get_this a b =
+		let copy_array = global_scalefactors a b in
+		let ptr = Ptr.make (2 * Array.length copy_array) 0 in
+		Array.iteri (fun i q -> Ptr.put_16_of_int ptr (2 * i) q) copy_array;
+		ptr
+	in
+	let long48000  = get_this S48000 false in
+	let long44100  = get_this S44100 false in
+	let long32000  = get_this S32000 false in
+	let long24000  = get_this S24000 false in
+	let long22050  = get_this S22050 false in
+	let long16000  = get_this S16000 false in
+	let long12000  = get_this S12000 false in
+	let long11025  = get_this S11025 false in
+	let long8000   = get_this  S8000 false in
+	let short48000 = get_this S48000 true  in
+	let short44100 = get_this S44100 true  in
+	let short32000 = get_this S32000 true  in
+	let short24000 = get_this S24000 true  in
+	let short22050 = get_this S22050 true  in
+	let short16000 = get_this S16000 true  in
+	let short12000 = get_this S12000 true  in
+	let short11025 = get_this S11025 true  in
+	let short8000  = get_this  S8000 true  in
+	fun sfreq is_short -> match (sfreq, is_short) with
+	| (S48000, false) -> long48000
+	| (S44100, false) -> long44100
+	| (S32000, false) -> long32000
+	| (S24000, false) -> long24000
+	| (S22050, false) -> long22050
+	| (S16000, false) -> long16000
+	| (S12000, false) -> long12000
+	| (S11025, false) -> long11025
+	| ( S8000, false) -> long8000
+
+	| (S48000, true ) -> short48000
+	| (S44100, true ) -> short44100
+	| (S32000, true ) -> short32000
+	| (S24000, true ) -> short24000
+	| (S22050, true ) -> short22050
+	| (S16000, true ) -> short16000
+	| (S12000, true ) -> short12000
+	| (S11025, true ) -> short11025
+	| ( S8000, true ) -> short8000
 ;;
 
 type block_type_t = Block_type_long | Block_type_short | Block_type_start | Block_type_stop;;
@@ -210,17 +294,16 @@ type m1_frame_data_t = {
 	m1_side_info : side_internal_t;
 	m1_scalefactors : int array array array; (* m1_scalefactors.(granule).(channel).(scalefactor) *)
 	m1_quantizers : int array array array; (* m1_quantizers.(granule).(channel).(quantizer) *)
+	m1_quantizer_ptrs : Ptr.t array array;
 	m1_starting_f1 : f1_t;
 };;
 
 type m2_frame_data_t = {
 	m2_header : header_t;
 	m2_side_info : side_internal_t;
-	m2_data_deleteme : string; (* deleteme because it should be processed sometime *)
-
 	m2_scalefactors : int array array; (* m2_scalefactors.(channel).(scalefactor) *)
 	m2_quantizers : int array array; (* m2_quantizers.(channel).(quantizer) *)
-
+	m2_quantizer_ptrs : Ptr.t array;
 	m2_starting_f1 : f1_t;
 };;
 
@@ -279,42 +362,42 @@ let print_side ?(tabs="") s =
 ;;
 
 (*
-## Side info:
-# 9/17/32 BYTES = 136/256 bits
-# 9: main_data_begin (8 for MPEG2)
-# ?: private_bits
-# 4: SCFI Band
-# 59: Side Information Granule
-#  12: part2_3 length (main data for this channel, granule in bits)
-#  9: Big values
-#  8: Global gain
-#  4: Scalefactor compress (9 for MPEG2)
-#  1: Window switch flag
-#   if 1:
-#    2: Block type
-#    1: Mix block flag
-#    5x2: Table Select [region]
-#    3x3: sub_block_gain [window]
-#   if 0:
-#    5x3: Table select [region]
-#    4: Region 0 count
-#    3: Region 1 count
-#  1: Pre flag (NOT FOR MPEG2)
-#  1: Scale factor scale
-#  1: Count1 table select
+Side info:
+ 9/17/32 BYTES = 136/256 bits
+ 9: main_data_begin (8 for MPEG2)
+ ?: private_bits
+ 4: SCFI Band
+ 59: Side Information Granule
+  12: part2_3 length (main data for this channel, granule in bits)
+  9: Big values
+  8: Global gain
+  4: Scalefactor compress (9 for MPEG2)
+  1: Window switch flag
+   if 1:
+    2: Block type
+    1: Mix block flag
+    5x2: Table Select [region]
+    3x3: sub_block_gain [window]
+   if 0:
+    5x3: Table select [region]
+    4: Region 0 count
+    3: Region 1 count
+  1: Pre flag (NOT FOR MPEG2)
+  1: Scale factor scale
+  1: Count1 table select
 
-# MPEG1 mono:
-# [9 main data] [5 privates] [4 SCFI] [59 Gr0] [59 Gr1]
-# (18 - 30) (77 - 89)
-# MPEG1 stereo:
-# [9 main data] [3 privates] [4 SCFI0] [4 SCFI1] [59 Gr0ch1] [59 Gr0ch2] [59 Gr1ch1] [59 Gr1ch2]
-# 20 79 138 197
-# MPEG2 mono:
-# [8 main data] [1 privates] [63 Gr*]
-# (9 - 21)
-# MPEG2 stereo:
-# [8 main data] [2 privates] [63 Gr*ch1] [63 Gr*ch2]
-# (10 - 22) (73 - 85)
+ MPEG1 mono:
+ [9 main data] [5 privates] [4 SCFI] [59 Gr0] [59 Gr1]
+ (18 - 30) (77 - 89)
+ MPEG1 stereo:
+ [9 main data] [3 privates] [4 SCFI0] [4 SCFI1] [59 Gr0ch1] [59 Gr0ch2] [59 Gr1ch1] [59 Gr1ch2]
+ 20 79 138 197
+ MPEG2 mono:
+ [8 main data] [1 privates] [63 Gr*]
+ (9 - 21)
+ MPEG2 stereo:
+ [8 main data] [2 privates] [63 Gr*ch1] [63 Gr*ch2]
+ (10 - 22) (73 - 85)
 *)
 
 
@@ -322,7 +405,7 @@ let print_side ?(tabs="") s =
 (*********************)
 (* READ SCALEFACTORS *)
 (*********************)
-let read_scalefactors_m1 ?(debug=false) ?(tabs="") scfi prev_scf_option gc r =
+let read_scalefactors_m1 ?(debug=false) ?(tabs="") scfi prev_scf_option gc s =
 	let make_initial_array = match (prev_scf_option, scfi) with
 		| (None, _) -> (fun x -> Array.make x 0)
 		| (Some y, [| false;false;false;false |]) -> (fun x -> Array.make x 0) (* If scfi indicates to not use anything from previous frame, just recreate the array. This helps for short blocks, when the array is the wrong length anyway *)
@@ -348,41 +431,45 @@ let read_scalefactors_m1 ?(debug=false) ?(tabs="") scfi prev_scf_option gc r =
 		)
 	in
 	(* Perhaps I should check for short frames somewhere? Or maybe just assume that the file has SCFSI set to false for short frames already *)
-	let rec read_stuff r i = (
+	let rec read_stuff i = (
 		let num_bits = if i < num1 then bits1 else bits2 in
+
+		if debug && debug_more then Printf.printf "reading %d bits from %d (len %d bytes)\n" num_bits s.Ptr.Ref.seq_at s.Ptr.Ref.seq_ref.Ptr.Ref.lentot;
+		if debug && debug_more then Printf.printf "seq fast is %08X, next bytes is %d\n" s.Ptr.Ref.seq_get_fast_int s.Ptr.Ref.seq_get_fast_next_byte;
 
 		if i >= Array.length scf_out then (
 			if debug && debug_more then Printf.printf "!";
-			r
 		) else if i < 6 then (
-			let r = if scfi.(0) then r else (let (a,r) = read_bits r num_bits in scf_out.(i) <- a; (if debug && debug_more then Printf.printf "0"); r) in
-			read_stuff r (succ i)
+			if not scfi.(0) then (scf_out.(i) <- get_seq s num_bits; if debug && debug_more then Printf.printf "0: %d\n" scf_out.(i));
+			read_stuff (succ i)
 		) else if i < 11 then (
-			let r = if scfi.(1) then r else (let (a,r) = read_bits r num_bits in scf_out.(i) <- a; (if debug && debug_more then Printf.printf "1"); r) in
-			read_stuff r (succ i)
+			if not scfi.(1) then (scf_out.(i) <- get_seq s num_bits; if debug && debug_more then Printf.printf "1: %d\n" scf_out.(i));
+			read_stuff (succ i)
 		) else if i < 16 then (
-			let r = if scfi.(2) then r else (let (a,r) = read_bits r num_bits in scf_out.(i) <- a; (if debug && debug_more then Printf.printf "2"); r) in
-			read_stuff r (succ i)
+			if not scfi.(2) then (scf_out.(i) <- get_seq s num_bits; if debug && debug_more then Printf.printf "2: %d\n" scf_out.(i));
+			read_stuff (succ i)
 		) else if i < 21 then (
-			let r = if scfi.(3) then r else (let (a,r) = read_bits r num_bits in scf_out.(i) <- a; (if debug && debug_more then Printf.printf "3"); r) in
-			read_stuff r (succ i)
+			if not scfi.(3) then (scf_out.(i) <- get_seq s num_bits; if debug && debug_more then Printf.printf "3: %d\n" scf_out.(i));
+			read_stuff (succ i)
 		) else (
-			let r = (let (a,r) = read_bits r num_bits in scf_out.(i) <- a; (if debug && debug_more then Printf.printf "+"); r) in
-			read_stuff r (succ i)
+			scf_out.(i) <- get_seq s num_bits; (if debug && debug_more then Printf.printf "+");
+			read_stuff (succ i)
 		)
 	) in
 
-	let new_r = read_stuff r 0 in
+	read_stuff 0;
+(*	read_stuff_s s 0;*)
 	if debug && debug_more then Printf.printf "\n";
+
 
 (*	if debug then Printf.printf "SCF compress (%d,%d)\n" bits1 bits2;*)
 	if debug then Printf.printf "%sREAD_SCALEFACTORS_M1: (%d,%d)=%d,%d - [%s ] " tabs bits1 bits2 num1 num2 (Array.fold_left (fun so_far gnu -> so_far ^ " " ^ (string_of_int gnu)) "" scf_out);
 	if debug then Array.iter (fun q -> Printf.printf "%s" (if q then "#" else ".")) scfi;
 	if debug then Printf.printf "\n";
-	(scf_out,new_r)
+	scf_out
 ;;
 
-let read_scalefactors_m2 ?(debug=false) ?(tabs="") is gc r =
+let read_scalefactors_m2 ?(debug=false) ?(tabs="") is gc s =
 
 	let (bits0, bits1, bits2, bits3) = if is then (
 		scalefactor_compress_m2_is.(gc.gc_scf_compress_index)
@@ -397,28 +484,44 @@ let read_scalefactors_m2 ?(debug=false) ?(tabs="") is gc r =
 	let num_total = sob3 + num3 in
 	
 	let scf_out = Array.make num_total 0 in
-
-	let rec read_stuff r i = (
+(*
+	let rec read_stuff i = (
 		if i < sob1 then (
-			let r = (let (a,r) = read_bits r bits0 in scf_out.(i) <- a; (if debug && debug_more then Printf.printf "0"); r) in
-			read_stuff r (succ i)
+			scf_out.(i) <- get_seq s bits0; if debug && debug_more then Printf.printf "0";
+			read_stuff (succ i)
 		) else if i < sob2 then (
-			let r = (let (a,r) = read_bits r bits1 in scf_out.(i) <- a; (if debug && debug_more then Printf.printf "1"); r) in
-			read_stuff r (succ i)
+			scf_out.(i) <- get_seq s bits1; if debug && debug_more then Printf.printf "1";
+			read_stuff (succ i)
 		) else if i < sob3 then (
-			let r = (let (a,r) = read_bits r bits2 in scf_out.(i) <- a; (if debug && debug_more then Printf.printf "2"); r) in
-			read_stuff r (succ i)
+			scf_out.(i) <- get_seq s bits2; if debug && debug_more then Printf.printf "2";
+			read_stuff (succ i)
 		) else if i < num_total then (
-			let r = (let (a,r) = read_bits r bits3 in scf_out.(i) <- a; (if debug && debug_more then Printf.printf "3"); r) in
-			read_stuff r (succ i)
+			scf_out.(i) <- get_seq s bits3; if debug && debug_more then Printf.printf "3";
+			read_stuff (succ i)
 		) else (
 			if debug && debug_more then Printf.printf "!";
-			r
 		)
 	) in
 
-	let new_r = read_stuff r 0 in
-	if debug && debug_more then Printf.printf "\n";
+	read_stuff 0;
+*)
+	for i = 0 to sob1 - 1 do
+		scf_out.(i) <- get_seq s bits0;
+(*		if debug && debug_more then Printf.printf "0";*)
+	done;
+	for i = sob1 to sob2 - 1 do
+		scf_out.(i) <- get_seq s bits1;
+(*		if debug && debug_more then Printf.printf "1";*)
+	done;
+	for i = sob2 to sob3 - 1 do
+		scf_out.(i) <- get_seq s bits2;
+(*		if debug && debug_more then Printf.printf "2";*)
+	done;
+	for i = sob3 to num_total - 1 do
+		scf_out.(i) <- get_seq s bits3;
+(*		if debug && debug_more then Printf.printf "3";*)
+	done;
+(*	if debug && debug_more then Printf.printf "!\n";*)
 
 	if debug then (
 		let str0 = Array.fold_left (fun so_far gnu -> so_far ^ " " ^ (string_of_int gnu)) "" (Array.sub scf_out    0 num0) in
@@ -428,71 +531,116 @@ let read_scalefactors_m2 ?(debug=false) ?(tabs="") is gc r =
 		Printf.printf "%sREAD_SCALEFACTORS_M2: (%d,%d,%d,%d)=%d,%d,%d,%d - [%s ]-[%s ]-[%s ]-[%s ]\n" tabs bits0 bits1 bits2 bits3 num0 num1 num2 num3 str0 str1 str2 str3;
 	);
 
-	(scf_out,new_r)
+	scf_out
 ;;
 
 (* It ends when r_at = r_to *)
-let read_quantizers_m1 ?(debug=false) ?(tabs="") k gc (r_str,r_at) r_to recompress_freq_overflow_warn_ref =
-	if debug && debug_more then Printf.printf "Starting on %S at %d, going to %d\n" (String.sub (to_bin r_str) r_at (r_to - r_at)) r_at r_to;
-
+let read_quantizers ?(debug=false) ?(tabs="") k gc in_ptr r_at r_to recompress_freq_overflow_warn_ref =
+	let s = Ptr.Ref.new_seq (Ptr.Ref.of_ptr in_ptr) in
+	Ptr.Ref.set_seq s r_at;
+	let gs = get_seq s in
 (*let debug = false in*)
+
+	if debug && debug_more then Printf.printf "Starting on %S at %d, going to %d\n" (String.sub (to_bin (Ptr.Ref.to_string s.Ptr.Ref.seq_ref)) s.Ptr.Ref.seq_at (r_to - s.Ptr.Ref.seq_at)) s.Ptr.Ref.seq_at r_to;
 
 	let decoder_error_ref = ref false in
 	let out_quants = Array.make num_quants 0 in
+	let out_quants_16_ptr = Ptr.make (num_quants * 2) 16 in
+(*
+	let in_ptr = Ptr.make (Ptr.Ref.length s.Ptr.Ref.seq_ref + 5) 16 in
+	Ptr.Ref.blit_to_ptr s.Ptr.Ref.seq_ref 0 in_ptr 0 (Ptr.Ref.length s.Ptr.Ref.seq_ref);
+*)
+	acc_ref before_decode_quant_ticks_ref;
 
+	let rec read_from_table index left hti linbits = if true then (
+		if debug then Printf.printf "Index = %d, left = %d\n" index left;
+		let (new_ptr_loc, new_index) = Mp3framehuffman.decode_big_quants in_ptr s.Ptr.Ref.seq_at r_to out_quants_16_ptr index (index + 2 * left) hti decoder_error_ref in
+		if debug then Printf.printf "Got new index %d\n" new_index;
+		Ptr.Ref.set_seq s new_ptr_loc;
+		for transfer = index to new_index - 1 do
+			out_quants.(transfer) <- Ptr.get_int_of_16 out_quants_16_ptr (transfer * 2);
+(*			if debug then Printf.printf " Q%d" out_quants.(transfer);*)
+			if debug && transfer land 1 = 1 then (
+				Printf.printf "Running read_from_table index=%d left=00 linbits=%d\n" (transfer - 1) Mp3framehuffman.global_ht_linbits.(hti);
+				Printf.printf " Found (%d,%d) for 00 ending with 00\n" (min 15 (abs out_quants.(transfer - 1))) (min 15 (abs out_quants.(transfer)));
+				Printf.printf "  Add (%d,%d)\n" ((abs out_quants.(transfer - 1)) - (min 15 (abs out_quants.(transfer - 1)))) ((abs out_quants.(transfer)) - (min 15 (abs out_quants.(transfer))));
+				Printf.printf "  Sign (%s,%s)\n" (if out_quants.(transfer - 1) >= 0 then "+" else "-") (if out_quants.(transfer) >= 0 then "+" else "-");
+			)
+		done;
+		if debug then Printf.printf "\n";
+		new_index
+(*
+		if new_index > index + 2 * left then (
+			if debug then Printf.printf " OOPS! Decoding bigvalues went %d values overboard (now at %d)\n" (new_index - index - 2 * left) new_ptr_loc;
+			decoder_error_ref := true;
+			index
+		) else if s.Ptr.Ref.seq_at > r_to then (
+			if debug then Printf.printf " OOPS! Decoding bigvalues got too many bits (now at %d)\n" s.Ptr.Ref.seq_at;
+			decoder_error_ref := true;
+			index
+		) else (
+			new_index
+		)
+*)
+	) else (
 
 	(* Big_values *)
-	let rec read_from_table index left ht linbits r_now = (
-if debug && debug_more then Printf.printf " Running read_from_table index=%d left=%d linbits=%d\n" index left linbits;
-		if left = 0 then (
-			(index, r_now)
+(*	let rec read_from_table index left hti linbits = ( *)
+		if debug && debug_more then Printf.printf " Running read_from_table index=%d left=%d linbits=%d\n" index left linbits;
+		if left <= 0 then (
+			index
+(*
 		) else if left < 0 then (
 			(* I don't entirely see how this can be hit, since 1 is subtracted from left during each iteration... *)
-			if debug then Printf.printf " OOPS! Decoding bigvalues went %d values overboard (now at %d)\n" ( ~- left) (snd r_now);
+			if debug then Printf.printf " OOPS! Decoding bigvalues went %d values overboard (now at %d)\n" ( ~- left) s.Ptr.Ref.seq_at;
 			decoder_error_ref := true;
-			(index, r_now)
-		) else if snd r_now >= r_to then (
-			if debug then Printf.printf " OOPS! Decoding bigvalues got too many bits (now at %d)\n" (snd r_now);
+			index
+*)
+		) else if s.Ptr.Ref.seq_at > r_to then (
+			(* This used to be s.Ptr.Ref.seq_at >= r_to, but I can't figure out why I would have the = part in there *)
+			(* If table 0 is used it would fail since it uses no bits but outputs valid big values *)
+			if debug then Printf.printf " OOPS! Decoding bigvalues got too many bits (now at %d)\n" s.Ptr.Ref.seq_at;
 			decoder_error_ref := true;
-			(index, r_now)
+			index
 		) else if index + 2 > num_quants then (
 			(* The big_values went off the end of the out_quants array! *)
 			if debug then Printf.printf " OOPS! Too many bigvalues; truncating here\n";
 			decoder_error_ref := true;
-			(index, r_now)
+			index
 		) else (
-			let ((abs_x,abs_y), r) = huffman_decode r_now ht global_ht_bits in
-			if debug && debug_more then Printf.printf " Found (%d,%d) for %d at %d\n" abs_x abs_y index (snd r_now);
+(*
+			let (abs_x,abs_y) = huffman_decode_ptrref s ht global_ht_bits in
+*)
+			Ptr.Ref.seq_fill s 19;
+			let current_int = s.Ptr.Ref.seq_get_fast_int in
+			let last_bit = s.Ptr.Ref.seq_get_fast_next_byte lsl 3 in
+			let current_shift = last_bit - s.Ptr.Ref.seq_at - 1 in
+			let got_huff_val = Mp3framehuffman.get_huffman_big hti current_int current_shift in
+			let bits_used = got_huff_val lsr 8 in
+			let abs_x = (got_huff_val lsr 4) land 15 in
+			let abs_y = got_huff_val land 15 in
+			Ptr.Ref.seq_add s bits_used;
 
-			let (x_add_lin, r) = if abs_x = 15 && linbits > 0 then (
-				read_bits r linbits
-			) else (0, r) in
+			let x_add_lin = if abs_x = 15 && linbits > 0 then gs linbits else 0 in
+			let x_neg = if abs_x > 0 then gs 1 else 0 in
 
-			let (x_neg, r) = if abs_x > 0 then (
-				read_bits r 1
-			) else (0, r) in
-
-			let (y_add_lin, r) = if abs_y = 15 && linbits > 0 then (
-				read_bits r linbits
-			) else (0, r) in
-			let (y_neg, r) = if abs_y > 0 then (
-				read_bits r 1
-			) else (0, r) in
+			let y_add_lin = if abs_y = 15 && linbits > 0 then gs linbits else 0 in
+			let y_neg = if abs_y > 0 then gs 1 else 0 in
+(*
 			let x_mult = if x_neg = 0 then 1 else -1 in
 			let y_mult = if y_neg = 0 then 1 else -1 in
+*)
+			if debug && debug_more then (
+				Printf.printf " Found (%d,%d) for %d ending with %d\n" abs_x abs_y index s.Ptr.Ref.seq_at;
+				Printf.printf "  Add (%d,%d)\n" x_add_lin y_add_lin;
+				Printf.printf "  Sign (%s,%s)\n" (if x_neg = 0 then "+" else "-") (if y_neg = 0 then "+" else "-");
+			);
 
-			if debug && debug_more then Printf.printf "  Add (%d,%d)\n" x_add_lin y_add_lin;
-			if debug && debug_more then Printf.printf "  Multiply by (%d,%d)\n" x_mult y_mult;
-
-(*
-			if snd r > r_to then (
-				if debug && debug_more then Printf.printf " OOPS! Decoding bigvalues went a little overboard (pos %d > %d)\n" (snd r) r_to;
-				(index, r)
-			) else*) (
-				out_quants.(index) <- (abs_x + x_add_lin) * x_mult;
-				out_quants.(index + 1) <- (abs_y + y_add_lin) * y_mult;
-				read_from_table (index + 2) (left - 1) ht linbits r
-			)
+			out_quants.(index + 0) <- (abs_x + x_add_lin) * (1 - 2 * x_neg);
+			out_quants.(index + 1) <- (abs_y + y_add_lin) * (1 - 2 * y_neg);
+			Ptr.put_16_of_int out_quants_16_ptr (2 * (index + 0)) out_quants.(index + 0);
+			Ptr.put_16_of_int out_quants_16_ptr (2 * (index + 1)) out_quants.(index + 1);
+			read_from_table (index + 2) (left - 1) hti linbits
 
 		)
 	) in
@@ -517,47 +665,109 @@ if debug && debug_more then Printf.printf " Running read_from_table index=%d lef
 	) in
 	if debug && debug_more then Printf.printf " L = (%d,%d,%d), ht = (%d,%d,%d)\n" region0 region1 region2 table0 table1 table2;
 
-	let (index, r) = read_from_table   0   region0 global_ht.(table0) global_ht_linbits.(table0) (r_str, r_at) in
-	let (index, r) = read_from_table index region1 global_ht.(table1) global_ht_linbits.(table1)       r       in
-	let (index, r) = read_from_table index region2 global_ht.(table2) global_ht_linbits.(table2)       r       in
+	let index = read_from_table   0   region0 table0 global_ht_linbits.(table0) in
+	let index = read_from_table index region1 table1 global_ht_linbits.(table1) in
+	let index = read_from_table index region2 table2 global_ht_linbits.(table2) in
+
+	if index <> 2 * gc.gc_big_values then (
+		decoder_error_ref := true;
+		if debug && debug_more then Printf.printf "No room for any more bigvalues %d != %d\n" index (2 * gc.gc_big_values);
+	);
 
 	if debug && debug_more then Printf.printf "DONE!\n";
 
+	acc_ref decode_big_quant_ticks_ref;
+
 	(* Count1 *)
-	let rec read_count1_from_table index ht r_now = (
-		if debug && debug_more then Printf.printf "%d = %d? %B. %d = %d? %B.\n" (snd r_now) r_to (snd r_now = r_to) index num_quants (index = num_quants);
-		if snd r_now > r_to || index > num_quants then (
-			if debug && debug_more then Printf.printf " OOPS! Decoding count1 went a little overboard (pos %d > %d or length %d > %d)\n" (snd r_now) r_to index num_quants;
+	let read_count1_from_table index table_1 =
+		if debug then Printf.printf "Count1 index = %d\n" index;
+		let (new_ptr_loc, new_index) = Mp3framehuffman.decode_count1_quants in_ptr s.Ptr.Ref.seq_at r_to out_quants_16_ptr index num_quants table_1 decoder_error_ref in
+		if debug then Printf.printf "Got new index %d, and new loc %d\n" new_index new_ptr_loc;
+		Ptr.Ref.set_seq s new_ptr_loc;
+		for transfer = index to (min new_index (Array.length out_quants)) - 1 do
+			out_quants.(transfer) <- Ptr.get_int_of_16 out_quants_16_ptr (transfer * 2);
+			if debug && debug_more then (
+				if (transfer - index) mod 4 = 0 then (
+					Printf.printf " Found %d at %d\n" out_quants.(transfer) transfer
+				) else if (transfer - index) mod 4 = 3 then (
+					Printf.printf "       %d (input to bit 00)\n" out_quants.(transfer);
+				) else (
+					Printf.printf "       %d\n" out_quants.(transfer);
+				)
+			)
+		done;
+		new_index
+	in
+	let rec old_read_count1_from_table index hti = (
+		if debug && debug_more then Printf.printf "%d = %d? %B. %d = %d? %B.\n" s.Ptr.Ref.seq_at r_to (s.Ptr.Ref.seq_at = r_to) index num_quants (index = num_quants);
+		if s.Ptr.Ref.seq_at > r_to || index > num_quants then (
+			if debug && debug_more then Printf.printf " OOPS! Decoding count1 went a little overboard (pos %d > %d or length %d > %d)\n" s.Ptr.Ref.seq_at r_to index num_quants;
 			decoder_error_ref := true;
-			(index, r_now)
-		) else if snd r_now = r_to || index = num_quants then (
-			(index, r_now)
+			index
+		) else if s.Ptr.Ref.seq_at = r_to || index = num_quants then (
+			index
 		) else (
-			let ((v1,w1,x1,y1),r) = huffman_decode r_now ht global_ht_bits in
+(*
+			let (v1,w1,x1,y1) = huffman_decode_ptrref s ht global_ht_count1_bits in
+*)
+			Ptr.Ref.seq_fill s 6;
+			let current_int = s.Ptr.Ref.seq_get_fast_int in
+			let last_bit = s.Ptr.Ref.seq_get_fast_next_byte lsl 3 in
+			let current_shift = last_bit - s.Ptr.Ref.seq_at - 1 in
+			let got_huff_val = Mp3framehuffman.get_huffman_part1 hti current_int current_shift in
+			let bits_used = got_huff_val lsr 8 in
+			Ptr.Ref.seq_add s bits_used;
+			let v1 = (got_huff_val lsr 3) land 1 in
+			let w1 = (got_huff_val lsr 2) land 1 in
+			let x1 = (got_huff_val lsr 1) land 1 in
+			let y1 = (got_huff_val      ) land 1 in
 
-			if debug && debug_more then Printf.printf " Found (%d,%d,%d,%d) for %d at %d (to %d)\n" v1 w1 x1 y1 index (snd r_now) r_to;
-
-			let (v_neg, r) = if v1 = 0 then (0, r) else (read_bits r 1) in
-			let (w_neg, r) = if w1 = 0 then (0, r) else (read_bits r 1) in
-			let (x_neg, r) = if x1 = 0 then (0, r) else (read_bits r 1) in
-			let (y_neg, r) = if y1 = 0 then (0, r) else (read_bits r 1) in
-
-			if debug then Printf.printf "  %s%s%s%s\n" (if v_neg = 1 then "-" else "+") (if w_neg = 1 then "-" else "+") (if x_neg = 1 then "-" else "+") (if y_neg = 1 then "-" else "+");
-
+			let v_neg = if v1 = 0 then 0 else gs 1 in
+			let w_neg = if w1 = 0 then 0 else gs 1 in
+			let x_neg = if x1 = 0 then 0 else gs 1 in
+			let y_neg = if y1 = 0 then 0 else gs 1 in
+(*
 			let v = if v_neg = 1 then ~- v1 else v1 in
 			let w = if w_neg = 1 then ~- w1 else w1 in
 			let x = if x_neg = 1 then ~- x1 else x1 in
 			let y = if y_neg = 1 then ~- y1 else y1 in
+*)
+			let v = v1 * (1 - 2 * v_neg) in
+			let w = w1 * (1 - 2 * w_neg) in
+			let x = x1 * (1 - 2 * x_neg) in
+			let y = y1 * (1 - 2 * y_neg) in
 
-			if snd r > r_to then (
+			if debug && debug_more then (
+				Printf.printf " Found %d at %d\n" v index;
+				Printf.printf "       %d\n" w;
+				Printf.printf "       %d\n" x;
+				Printf.printf "       %d (input to bit %d)\n" y s.Ptr.Ref.seq_at;
+(*
+				Printf.printf " Found (%d,%d,%d,%d) for %d ending with %d (to %d)\n" v1 w1 x1 y1 index s.Ptr.Ref.seq_at r_to;
+				Printf.printf "  %s%s%s%s\n" (if v_neg = 1 then "-" else "+") (if w_neg = 1 then "-" else "+") (if x_neg = 1 then "-" else "+") (if y_neg = 1 then "-" else "+");
+*)
+			);
+
+			if s.Ptr.Ref.seq_at > r_to then (
 				(* The file has been read too far *)
-				if debug && debug_more then Printf.printf " OOPS! Decoding count1 went a little overboard (pos %d > %d)\n" (snd r) r_to;
+				if debug && debug_more then Printf.printf " OOPS! Decoding count1 went a little overboard (pos %d > %d)\n" s.Ptr.Ref.seq_at r_to;
 
 				(* This should be an error *)
 				decoder_error_ref := true;
 
-				(index, r)
-			) else if (index + 4) > num_quants && x = 0 && y = 0 then (
+				index
+			) else if (index + 4) <= num_quants then (
+				out_quants.(index + 0) <- v;
+				out_quants.(index + 1) <- w;
+				out_quants.(index + 2) <- x;
+				out_quants.(index + 3) <- y;
+				Ptr.put_16_of_int out_quants_16_ptr (2 * (index + 0)) out_quants.(index + 0);
+				Ptr.put_16_of_int out_quants_16_ptr (2 * (index + 1)) out_quants.(index + 1);
+				Ptr.put_16_of_int out_quants_16_ptr (2 * (index + 2)) out_quants.(index + 2);
+				Ptr.put_16_of_int out_quants_16_ptr (2 * (index + 3)) out_quants.(index + 3);
+
+				old_read_count1_from_table (index + 4) hti
+			) else if x = 0 && y = 0 then (
 				(* If the frequencies above the max were 0, assume that the encoder just does that *)
 				if debug && debug_more then (
 					Printf.printf " Num_quants exceeded, but the values are 0 so ignore (length %d > %d)\n" (index + 4) num_quants
@@ -567,8 +777,10 @@ if debug && debug_more then Printf.printf " Running read_from_table index=%d lef
 				);
 				out_quants.(index + 0) <- v;
 				out_quants.(index + 1) <- w;
-				(index + 2, r)
-			) else if (index + 4) > num_quants then (
+				Ptr.put_16_of_int out_quants_16_ptr (2 * (index + 0)) out_quants.(index + 0);
+				Ptr.put_16_of_int out_quants_16_ptr (2 * (index + 1)) out_quants.(index + 1);
+				index + 2
+			) else (
 				(* The stuff above the max frequency is not zero! This indicates badness *)
 				if debug && debug_more then (
 					Printf.printf " OOPS! Decoding count1 went a little overboard (length %d > %d)\n" (index + 4) num_quants
@@ -580,210 +792,432 @@ if debug && debug_more then Printf.printf " Running read_from_table index=%d lef
 				(* However, it is not considered an error as of 1.16; instead, the quants are set to 0 *)
 (*				decoder_error_ref := true;*)
 
-				(index, r)
-			) else (
-				out_quants.(index + 0) <- v;
-				out_quants.(index + 1) <- w;
-				out_quants.(index + 2) <- x;
-				out_quants.(index + 3) <- y;
-
-				read_count1_from_table (index + 4) ht r
+				index
 			)
 		)
 	) in
 
-	let (index, r) = read_count1_from_table index global_ht_count1.(if gc.gc_count1_table_1 then 1 else 0) r in
+	acc_ref decode_part1_quant_ticks_ref;
+
+	let index = if true then read_count1_from_table index gc.gc_count1_table_1 else old_read_count1_from_table index (if gc.gc_count1_table_1 then 1 else 0) in
+	for i = index to num_quants - 1 do
+		Ptr.put_16_of_int out_quants_16_ptr (2 * i) 0;
+	done;
+
+	if s.Ptr.Ref.seq_at > r_to then (
+		if debug && debug_more then Printf.printf " OOPS! Decoding count1 went a little overboard (pos %d > %d)\n" s.Ptr.Ref.seq_at r_to;
+		decoder_error_ref := true;
+	);
 
 	if debug then Printf.printf "%sREAD_QUANTIZERS_M1: (%d) - [" tabs index;
 	if debug then (Array.iter (fun x -> Printf.printf " %d" x) out_quants; Printf.printf " ]\n");
-	(out_quants, !decoder_error_ref)
+	(out_quants, out_quants_16_ptr, !decoder_error_ref)
 ;;
 
-(***
-let read_quantizers_m1_old ?(debug=false) ?(tabs="") k gc (r_str,r_at) r_to =
-	if debug && debug_more then Printf.printf "Starting on %S at %d, going to %d\n" (String.sub (to_bin r_str) r_at (r_to - r_at)) r_at r_to;
-
-(*let debug = false in*)
-
-	let decoder_error_ref = ref false in
-	let out_quants = Array.make num_quants 0 in
 
 
-	(* Big_values *)
-	let rec read_from_table index left ht linbits r_now = (
-if debug && debug_more then Printf.printf " Running read_from_table index=%d left=%d linbits=%d\n" index left linbits;
-		if left = 0 then (index, r_now) else if left < 0 then (
-			if debug then Printf.printf " OOPS! Decoding bigvalues went %d bytes overboard (now at %d)\n" ( ~- left) (snd r_now);
-			decoder_error_ref := true;
-			(index, r_now)
-		) else (
-			let ((abs_x,abs_y), r) = huffman_decode r_now ht global_ht_bits in
-			if debug && debug_more then Printf.printf " Found (%d,%d) for %d at %d\n" abs_x abs_y index (snd r_now);
-
-			let (x_add_lin, r) = if abs_x = 15 && linbits > 0 then (
-				read_bits r linbits
-			) else (0, r) in
-
-			let (x_neg, r) = if abs_x > 0 then (
-				read_bits r 1
-			) else (0, r) in
-
-			let (y_add_lin, r) = if abs_y = 15 && linbits > 0 then (
-				read_bits r linbits
-			) else (0, r) in
-			let (y_neg, r) = if abs_y > 0 then (
-				read_bits r 1
-			) else (0, r) in
-			let x_mult = if x_neg = 0 then 1 else -1 in
-			let y_mult = if y_neg = 0 then 1 else -1 in
-
-			if debug && debug_more then Printf.printf "  Add (%d,%d)\n" x_add_lin y_add_lin;
-			if debug && debug_more then Printf.printf "  Multiply by (%d,%d)\n" x_mult y_mult;
-
-			out_quants.(index) <- (abs_x + x_add_lin) * x_mult;
-			out_quants.(index + 1) <- (abs_y + y_add_lin) * y_mult;
-
-if debug && debug_more then Printf.printf "1\n";
-
-			read_from_table (index + 2) (left - 1) ht linbits r
-		)
-	) in
-
-	let (region0, region1, region2, table0, table1, table2) = (match gc.gc_window with
-		| Window_normal w -> (
-			let scfend0 = w.normal_region_0_count + 1 in
-			let scfend1 = w.normal_region_1_count + 1 + scfend0 in
-			let region0 = min gc.gc_big_values ((global_scalefactors k.header_samplerate false).(scfend0) lsr 1) in
-			let region1 = min gc.gc_big_values ((global_scalefactors k.header_samplerate false).(scfend1) lsr 1) - region0 in
-			(region0, region1, gc.gc_big_values - region0 - region1, w.normal_table_select1, w.normal_table_select2, w.normal_table_select3)
-		)
-		| Window_other  w -> (
-			let region0 = if w.other_block_type = Block_type_short && not w.other_mixed_block then (
-				(global_scalefactors k.header_samplerate true).(9 / 3) lsr 1 * 3
-			) else (
-				(global_scalefactors k.header_samplerate false).(8) lsr 1
-			) in
-
-			(min region0 gc.gc_big_values, max 0 (gc.gc_big_values - region0), 0, w.other_table_select1, w.other_table_select2, 0)
-		)
-	) in
-	if debug && debug_more then Printf.printf " L = (%d,%d,%d), ht = (%d,%d,%d)\n" region0 region1 region2 table0 table1 table2;
-
-	let (index, r) = read_from_table   0   region0 global_ht.(table0) global_ht_linbits.(table0) (r_str, r_at) in
-	let (index, r) = read_from_table index region1 global_ht.(table1) global_ht_linbits.(table1)       r       in
-	let (index, r) = read_from_table index region2 global_ht.(table2) global_ht_linbits.(table2)       r       in
-
-if debug && debug_more then Printf.printf "DONE!\n";
-
-	(* Count1 *)
-	let rec read_count1_from_table index ht r = (
-		if debug && debug_more then Printf.printf "%d = %d? %B. %d = %d? %B.\n" (snd r) r_to (snd r = r_to) index num_quants (index = num_quants);
-		if snd r > r_to || index > num_quants then (
-			if debug && debug_more then Printf.printf " OOPS! Decoding count1 went a little overboard (pos %d > %d or length %d > %d)\n" (snd r) r_to index num_quants;
-			decoder_error_ref := true;
-			(index, r)
-		) else if snd r = r_to || index = num_quants then (
-			(index, r)
-		) else (
-			let ((v1,w1,x1,y1),r) = huffman_decode r ht global_ht_bits in
-
-			if debug && debug_more then Printf.printf " Found (%d,%d,%d,%d) for %d at %d (to %d)\n" v1 w1 x1 y1 index (snd r) r_to;
-
-			let (v_neg, r) = if v1 = 0 then (0, r) else (read_bits r 1) in
-			let (w_neg, r) = if w1 = 0 then (0, r) else (read_bits r 1) in
-			let (x_neg, r) = if x1 = 0 then (0, r) else (read_bits r 1) in
-			let (y_neg, r) = if y1 = 0 then (0, r) else (read_bits r 1) in
-
-			if debug then Printf.printf "  %s%s%s%s\n" (if v_neg = 1 then "-" else "+") (if w_neg = 1 then "-" else "+") (if x_neg = 1 then "-" else "+") (if y_neg = 1 then "-" else "+");
-
-			let v = if v_neg = 1 then ~- v1 else v1 in
-			let w = if w_neg = 1 then ~- w1 else w1 in
-			let x = if x_neg = 1 then ~- x1 else x1 in
-			let y = if y_neg = 1 then ~- y1 else y1 in
-
-			if (index + 4) > num_quants && x = 0 && y = 0 then (
-				(* If the ones above the max were 0, assume that the encoder just does that *)
-				if debug && debug_more then Printf.printf " Num_quants exceeded, but the values are 0 so ignore (length %d > %d)\n" (index + 4) num_quants;
-				out_quants.(index + 0) <- v;
-				out_quants.(index + 1) <- w;
-				(index + 2, r)
-			) else if snd r > r_to || (index + 4) > num_quants then (
-				(* The stuff above the max frequency is not zero! This indicates badness *)
-				if debug && debug_more then Printf.printf " OOPS! Decoding count1 went a little overboard (pos %d > %d or length %d > %d)\n" (snd r) r_to (index + 4) num_quants;
-
-				(* However, it is not considered an error as of 1.16; instead, the quants are set to 0 *)
-(*				decoder_error_ref := true;*)
-
-				(index, r)
-			) else (
-				out_quants.(index + 0) <- v;
-				out_quants.(index + 1) <- w;
-				out_quants.(index + 2) <- x;
-				out_quants.(index + 3) <- y;
-
-				read_count1_from_table (index + 4) ht r
-			)
-		)
-	) in
-
-	let (index, r) = read_count1_from_table index global_ht_count1.(if gc.gc_count1_table_1 then 1 else 0) r in
-
-	if debug then Printf.printf "%sREAD_QUANTIZERS_M1: (%d) - [" tabs index;
-	if debug then (Array.iter (fun x -> Printf.printf " %d" x) out_quants; Printf.printf " ]\n");
-	(out_quants, !decoder_error_ref)
-;;
-***)
-
-(* WORKING *)
+(************************************************************************************************************************)
+(* REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME *)
+(************************************************************************************************************************)
+let rehuff_granule debug quant_ptr process_function gc scf_bands_ptr = match gc.gc_window with
+	| Window_other w -> gc
+	| Window_normal w -> (
 (*
-let read_quantizers_m2 ?(debug=false) ?(tabs="") k gc (r.str,r_at) r_to =
-	if debug && debug_more then Printf.printf "Starting on %S at %d, going to %d\n" (String.sub (to_bin r_str) r_at (r_to - r_at)) r_at r_to;
-
-	let decoder_error_ref = ref false in
-	let out_quants = Array.make num_quants 0 in
-
-	(* Big_values *)
-	let rec read_from_table index left ht linbits r_now
-;;
-WORKING;;
+		if false then (
+			Printf.printf "EDITING QUANTS!\n";
+			for i = 0 to 1 do
+				quants.(i * 2 + 0) <- 18;
+				quants.(i * 2 + 1) <- 2;
+			done;
+			for i = 2 to 3 do
+				quants.(i * 2 + 0) <- 2049;
+				quants.(i * 2 + 1) <- 1;
+			done;
+			for i = 0 to -1 do
+				quants.(i * 4 + 0) <- 0;
+				quants.(i * 4 + 1) <- 0;
+				quants.(i * 4 + 2) <- 1;
+				quants.(i * 4 + 3) <- 0;
+			done;
+		);
 *)
+		let (s_l1,s_l2,s_big,s_count1num,s_t1,s_t2,s_t3,p1t1) = (
+
+			if debug then Printf.printf "%!";
+			acc_ref before_c_ticks_ref;
+(*			Printf.printf "FIND BEST CONFIG\n%!";*)
+			let (s_l1,s_l2,s_big,s_count1num,s_t1,s_t2,s_t3,p1t1) = process_function
+				quant_bits_ptr16
+				quant_bits_count1_char_ptr
+				scf_bands_ptr
+				quant_ptr
+				debug
+			in
+(*			Printf.printf "DONE BEST CONFIG\n%!";*)
+			acc_ref in_c_ticks_ref;
+
+			(s_l1,s_l2,s_big,s_count1num,s_t1,s_t2,s_t3,p1t1)
+		) in
+
+(*		let (s_l1,s_l2,s_big,s_t1,s_t2,s_t3,p1t1) = smallest_config in*)
+		if debug then (
+			Printf.printf "  NEW: (%d,%d,%d,%d,%d,%d,%B)\n" s_l1 s_l2 s_big s_t1 s_t2 s_t3 p1t1;
+			Printf.printf "       tables %d,%d,%d, length %db,%db,%dq\n" s_t1 s_t2 s_t3 (s_l1 + 1) (s_l2 + 1) (2 * s_big);
+			Printf.printf "\n%!";
+		);
+(*		Printf.printf "Best config: tables %d,%d,%d, length %db,%db,%dq\n" s_t1 s_t2 s_t3 (s_l1 + 1) (s_l2 + 1) (2 * s_big);*)
+
+		{gc with
+			gc_big_values = s_big;
+			gc_window = Window_normal {normal_table_select1 = s_t1; normal_table_select2 = s_t2; normal_table_select3 = s_t3; normal_region_0_count = s_l1; normal_region_1_count = s_l2};
+			gc_count1_table_1 = p1t1;
+		}
+	)
+;; (* rehuff_granule quants gc scf_quants *)
+
+
+(******************)
+(* REHUFF THREADS *)
+(******************)
+type ('a,'b) rehuff_thread_t = {
+	rehuff_thread : Thread.t;
+	rehuff_thread_id : os_thread_id;
+	rehuff_thread_mutex : Mutex.t;
+	rehuff_thread_process_cond : Condition.t;
+	mutable rehuff_thread_process : 'a option;
+	rehuff_thread_done_cond : Condition.t;
+	mutable rehuff_thread_done : 'b option;
+};;
+
+let rec rehuff_thread_guts send_thread_channel =
+	(* This thread has to make the thread info in order to get the thread_id *)
+	let t = {
+		rehuff_thread = Thread.self ();
+		rehuff_thread_id = get_os_thread_self_id ();
+		rehuff_thread_mutex = Mutex.create ();
+		rehuff_thread_process_cond = Condition.create ();
+		rehuff_thread_process = None;
+		rehuff_thread_done_cond = Condition.create ();
+		rehuff_thread_done = None;
+	} in
+	Event.sync (Event.send send_thread_channel t);
+	let rec loop () =
+
+		Mutex.lock t.rehuff_thread_mutex;
+		let rec get () = match t.rehuff_thread_process with
+			| None -> (Condition.wait t.rehuff_thread_process_cond t.rehuff_thread_mutex; get ())
+			| Some a -> a
+		in
+		let (debug, header, ptr, at_bit, to_bit, side_gc, scf_bands_ptr, process_function) = get () in
+		t.rehuff_thread_process <- None;
+		Mutex.unlock t.rehuff_thread_mutex;
+
+		let ret = try
+			let (q,qp,error) = read_quantizers ~debug:debug header side_gc ptr at_bit to_bit (ref false) in
+			let gc = rehuff_granule debug qp process_function side_gc scf_bands_ptr in
+			Normal (q,qp,error,gc)
+		with
+			| e -> (
+				if debug then Printf.printf "rehuff_thread_guts failed with %s\n%!" (Printexc.to_string e);
+				Error e
+			)
+		in
+
+		Mutex.lock t.rehuff_thread_mutex;
+		t.rehuff_thread_done <- Some ret;
+		Condition.signal t.rehuff_thread_done_cond;
+		Mutex.unlock t.rehuff_thread_mutex;
+
+		loop ()
+	in
+	loop ()
+;;
+
+let make_rehuff_thread () =
+	let chan = Event.new_channel () in
+	ignore @@ Thread.create rehuff_thread_guts chan;
+	let id = Event.sync (Event.receive chan) in
+	id
+;;
+
+let rehuff_thread_array_ref = ref [||];;
+
+let expand_rehuff_array target_size =
+	if Array.length !rehuff_thread_array_ref < target_size then (
+		let new_array = Array.init target_size (fun i -> if i < Array.length !rehuff_thread_array_ref then !rehuff_thread_array_ref.(i) else make_rehuff_thread ()) in
+		rehuff_thread_array_ref := new_array
+	)
+;;
+
+let decode_granule_async debug header ptr at_bit to_bit side_gc scf_bands_ptr process_function gran_num =
+	expand_rehuff_array (gran_num + 1);
+	let t = !rehuff_thread_array_ref.(gran_num) in
+
+	Mutex.lock t.rehuff_thread_mutex;
+	t.rehuff_thread_done <- None;
+	t.rehuff_thread_process <- Some (debug, header, ptr, at_bit, to_bit, side_gc, scf_bands_ptr, process_function);
+	Condition.signal t.rehuff_thread_process_cond;
+	Mutex.unlock t.rehuff_thread_mutex;
+
+	gran_num
+;;
+
+let sync_decode gran_num =
+	if gran_num >= Array.length !rehuff_thread_array_ref then failwith "can't get granule back from worker thread";
+	let t = !rehuff_thread_array_ref.(gran_num) in
+	if thread_is_alive t.rehuff_thread_id then (
+		Mutex.lock t.rehuff_thread_mutex;
+		let rec get () =
+			match t.rehuff_thread_done with
+			| None -> (Condition.wait t.rehuff_thread_done_cond t.rehuff_thread_mutex; get ())
+			| Some a -> a
+		in
+		let a = get () in
+		Mutex.unlock t.rehuff_thread_mutex;
+		match a with
+		| Normal x -> x
+		| Error e -> raise e
+	) else (
+		failwith "worker thread died";
+	)
+;;
+
+(********
+type 'a async_send_t =
+	| Async_send of 'a(*bool * Ptr.t * side_gc_t * Ptr.t (* (debug,quant_ptr,side_gc,scf_bands) *)*)
+	| Async_ping
+;;
+
+type rehuff_thread_t = {
+	rehuff_thread : Thread.t;
+	rehuff_channel_process : (bool * Ptr.t * side_gc_t * Ptr.t) async_send_t Event.channel;
+	rehuff_channel_done : side_gc_t Event.channel;
+};;
+
+let rehuff_thread_guts thread_num recv_channel send_channel =
+	let rec loop () =
+(*		let (debug, quant_ptr, side_gc, scf_bands_ptr) = *)
+		match Event.sync (Event.receive recv_channel) with
+		| Async_ping -> loop () (* Go again *)
+		| Async_send (debug, quant_ptr, side_gc, scf_bands_ptr) -> (
+(*			Thread.delay 0.2;*)
+(*			if debug then Printf.printf "%s%!" (Printf.sprintf "<%d>\n" thread_num);*)
+			let new_gc = rehuff_granule false quant_ptr side_gc scf_bands_ptr in
+			Event.sync (Event.send send_channel new_gc);
+(*			if debug then Printf.printf "%s%!" (Printf.sprintf "{%d}\n" thread_num);*)
+			loop ()
+		)
+	in
+	loop ()
+;;
+let make_rehuff_thread i =
+	let send = Event.new_channel () in
+	let recv = Event.new_channel () in
+	let t = Thread.create (rehuff_thread_guts i recv) send in
+	{
+		rehuff_thread = t;
+		rehuff_channel_process = recv;
+		rehuff_channel_done = send;
+	}
+;;
+
+let rehuff_thread_array_ref = ref [||];;
+let next_rehuff_thread_ref = ref 0;;
+let async_sync = false;;
+if async_sync then (
+	Printf.printf "\n";
+	Printf.printf "###########################################\n";
+	Printf.printf "#### ASYNC THREADS WORK SYNCHRONOUSLY! ####\n";
+	Printf.printf "###########################################\n";
+);;
+let rehuff_granule_async debug qp gc scf_bands =
+	if Array.length !rehuff_thread_array_ref = 0 then (
+		(* We'll never need any more than 4 threads, since that's the max number of granules per frame *)
+		rehuff_thread_array_ref := Array.init 4 make_rehuff_thread
+	);
+	while !next_rehuff_thread_ref >= Array.length !rehuff_thread_array_ref do
+		next_rehuff_thread_ref := !next_rehuff_thread_ref - Array.length !rehuff_thread_array_ref;
+	done;
+	let do_thread = !next_rehuff_thread_ref in
+	let channel_process = !rehuff_thread_array_ref.(do_thread).rehuff_channel_process in
+	let channel_done = !rehuff_thread_array_ref.(do_thread).rehuff_channel_done in
+	if debug then Printf.printf "checking thread %d to see if it's still alive\n" do_thread;
+	(* If the previous frame processed everything properly, the thread will be waiting on rehuff_channel_process *)
+	(* However, if the main thread failed while the processing thread was still going, the processing thread will be waiting on rehuff_channel_done *)
+	(* This will force the thread to stop waiting on anything, making it wait on rehuff_channel_process next *)
+	Event.sync @@ Event.choose [
+		Event.send channel_process Async_ping;
+		Event.wrap (Event.receive channel_done) ignore
+	];
+	if debug then Printf.printf "sending GC to thread %d\n%!" do_thread;
+	Event.sync @@ Event.send channel_process (Async_send (debug, qp, gc, scf_bands));
+	if debug then Printf.printf "sent GC to thread %d\n%!" do_thread;
+	let ret = if async_sync then (
+		let put_back = Event.sync @@ Event.receive channel_done in
+		Event.always put_back
+	) else (
+		Event.receive channel_done
+	) in
+	incr next_rehuff_thread_ref;
+	ret
+;;
+
+type decode_thread_t = {
+	decode_thread : Thread.t;
+	decode_channel_process : (bool * header_t * Ptr.t * int * int * side_gc_t * Ptr.t) async_send_t Event.channel;
+	decode_channel_done : ((int array * Ptr.t * bool * side_gc_t) option) Event.channel;
+};;
+let decode_thread_guts thread_num recv_channel send_channel =
+	let rec loop () =
+		match Event.sync (Event.receive recv_channel) with
+		| Async_ping -> loop ()
+		| Async_send (debug, header, ptr, at_bit, to_bit, side_gc, scf_bands_ptr) -> (
+			let ret = try
+				let (q,qp,error) = read_quantizers ~debug:debug header side_gc ptr at_bit to_bit (ref false) in
+				let gc = rehuff_granule debug qp side_gc scf_bands_ptr in
+				Some (q,qp,error,gc)
+			with
+				| e -> (
+					if debug then Printf.printf "decode_thread_guts failed with %s\n%!" (Printexc.to_string e);
+					None
+				)
+			in
+			Event.sync (Event.send send_channel ret);
+			loop ()
+		)
+	in
+	loop ()
+;;
+let make_decode_thread i =
+	let send = Event.new_channel () in
+	let recv = Event.new_channel () in
+	let t = Thread.create (decode_thread_guts i recv) send in
+	{
+		decode_thread = t;
+		decode_channel_process = recv;
+		decode_channel_done = send;
+	}
+;;
+
+let decode_thread_array_ref = ref [||];;
+let next_decode_thread_ref = ref 0;;
+let decode_granule_async debug header ptr at_bit to_bit side_gc scf_bands_ptr gran_num =
+	if Array.length !decode_thread_array_ref = 0 then (
+		decode_thread_array_ref := Array.init 4 make_decode_thread
+	);
+	while !next_decode_thread_ref >= Array.length !decode_thread_array_ref do
+		next_decode_thread_ref := !next_decode_thread_ref - Array.length !decode_thread_array_ref;
+	done;
+	let do_thread = !next_decode_thread_ref in
+	let decode = !decode_thread_array_ref.(do_thread) in
+	let channel_process = decode.decode_channel_process in
+	let channel_done = decode.decode_channel_done in
+	if debug then Printf.printf "checking decode thread %d to see if it's still alive\n" do_thread;
+	Event.sync @@ Event.choose [
+		Event.send channel_process Async_ping;
+		Event.wrap (Event.receive channel_done) ignore
+	];
+	if debug then Printf.printf "sending input data to thread %d\n%!" do_thread;
+	Event.sync @@ Event.send channel_process (Async_send (debug, header, ptr, at_bit, to_bit, side_gc, scf_bands_ptr));
+	if debug then Printf.printf "sent input data to thread %d\n%!" do_thread;
+	let ret = if async_sync then (
+		let put_back = Event.sync @@ Event.receive channel_done in
+		Event.always put_back
+	) else (
+		Event.receive channel_done
+	) in
+	incr next_decode_thread_ref;
+	ret
+;;
+(* The decode functions can raise exceptions, which are caught and turned into None in the channel *)
+(* This function turns it back into an exception *)
+let sync_decode event =
+	match Event.sync event with
+	| Some x -> x
+	| None -> raise (Failure "decode granule")
+;;
+
+(*
+let rehuff_frame ?(debug=false) frame = (
+
+	if debug then Printf.printf "\n";
+
+	match frame with
+	| M1_frame_data f -> (
+		if debug then Printf.printf "REHUFF_FRAME M1\n";
+(*		let scf_bands = global_scalefactors f.m1_header.header_samplerate false in*)
+		let scf_bands_ptr = global_scalefactors_ptr f.m1_header.header_samplerate false in
+		let new_granules = Array.mapi (fun gran_i quant_gran ->
+			let new_channels = Array.mapi (fun chan_i quant_ptr ->
+				if debug then Printf.printf " GC %d,%d\n" gran_i chan_i;
+				let gc = f.m1_side_info.side_gc.(gran_i).(chan_i) in
+				rehuff_granule debug quant_ptr gc scf_bands_ptr
+			) quant_gran in
+			new_channels
+		) f.m1_quantizer_ptrs in
+		M1_frame_data {f with
+			m1_side_info = {f.m1_side_info with side_gc = new_granules}
+		}
+	)
+	| M2_frame_data f -> (
+		if debug then Printf.printf "REHUFF_FRAME M2\n";
+
+(*		let scf_bands = global_scalefactors f.m2_header.header_samplerate false in*)
+		let scf_bands_ptr = global_scalefactors_ptr f.m2_header.header_samplerate false in
+		let new_granules = Array.mapi (fun chan_i quant_ptr ->
+			if debug then Printf.printf " GC %d\n" chan_i;
+			let gc = f.m2_side_info.side_gc.(0).(chan_i) in
+			rehuff_granule debug quant_ptr gc scf_bands_ptr
+		) f.m2_quantizer_ptrs in
+		M2_frame_data {f with
+			m2_side_info = {f.m2_side_info with side_gc = [| new_granules |]}
+		}
+	)
+
+);;
+*)
+********)
+
+
+
 
 (*********************************************************************************)
 (* DECODE FRAME DECODE FRAME DECODE FRAME DECODE FRAME DECODE FRAME DECODE FRAME *)
 (*********************************************************************************)
-let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
-	let r = (f.f1_side.side_raw, 0) in
-	let (side_info, r) = match f.f1_header.header_id with
+let decode_frame ?(debug = false) f process_function recompress_freq_overflow_warn_ref =
+	let s = Ptr.Ref.new_seq f.f1_side.side_raw in
+	let gs = get_seq s in
+	let side_info = match f.f1_header.header_id with
 		| MPEG1 -> (
 
-			let read_gc r part2_3_offset = (
-				let (part2_3_length, r) = read_bits r 12 in
-				let (big_values, r) = read_bits r 9 in
-				let (global_gain, r) = read_bits r 8 in
-				let (scf_compress, r) = read_bits r 4 in
-				let (window_flag, r) = read_bits r 1 in
-				let (window, r) = if window_flag = 0 then (
-					let (huff1, r) = read_bits r 5 in
-					let (huff2, r) = read_bits r 5 in
-					let (huff3, r) = read_bits r 5 in
-					let (r0, r) = read_bits r 4 in
-					let (r1, r) = read_bits r 3 in
-					(Window_normal {
+			let read_gc part2_3_offset = (
+				let part2_3_length = gs 12 in
+				let big_values = gs 9 in
+				let global_gain = gs 8 in
+				let scf_compress = gs 4 in
+				let window_flag = gs 1 in
+				let window = if window_flag = 0 then (
+					let huff1 = gs 5 in
+					let huff2 = gs 5 in
+					let huff3 = gs 5 in
+					let r0 = gs 4 in
+					let r1 = gs 3 in
+					Window_normal {
 						normal_table_select1 = huff1;
 						normal_table_select2 = huff2;
 						normal_table_select3 = huff3;
 						normal_region_0_count = r0;
 						normal_region_1_count = r1;
-					}, r)
+					}
 				) else (
-					let (block_type_index, r) = read_bits r 2 in
-					let (mixed_block, r) = read_bits r 1 in
-					let (huff1, r) = read_bits r 5 in
-					let (huff2, r) = read_bits r 5 in
-					let (sb_gain1, r) = read_bits r 3 in
-					let (sb_gain2, r) = read_bits r 3 in
-					let (sb_gain3, r) = read_bits r 3 in
-					(Window_other {
+					let block_type_index = gs 2 in
+					let mixed_block = gs 1 in
+					let huff1 = gs 5 in
+					let huff2 = gs 5 in
+					let sb_gain1 = gs 3 in
+					let sb_gain2 = gs 3 in
+					let sb_gain3 = gs 3 in
+					Window_other {
 						other_block_type = [| Block_type_long; Block_type_start; Block_type_short; Block_type_stop |].(block_type_index);
 						other_mixed_block = (mixed_block = 1);
 						other_table_select1 = huff1;
@@ -791,11 +1225,11 @@ let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 						other_sub_block_gain1 = sb_gain1;
 						other_sub_block_gain2 = sb_gain2;
 						other_sub_block_gain3 = sb_gain3;
-					}, r)
+					}
 				) in
-				let (pre_flag, r) = read_bits r 1 in
-				let (sf_scale, r) = read_bits r 1 in
-				let (count1_table, r) = read_bits r 1 in
+				let pre_flag = gs 1 in
+				let sf_scale = gs 1 in
+				let count1_table = gs 1 in
 				({
 					gc_part2_3_length = part2_3_length;
 					gc_part2_3_offset = part2_3_offset;
@@ -806,79 +1240,79 @@ let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 					gc_pre_flag = (pre_flag = 1);
 					gc_sf_scale = sf_scale;
 					gc_count1_table_1 = (count1_table = 1);
-				}, r, part2_3_offset + part2_3_length)
+				}, part2_3_offset + part2_3_length)
 			) in
 
 			match f.f1_header.header_channel_mode with
 			| ChannelMono -> (
-				let (main_data, r) = read_bits r 9 in
-				let (_, r) = read_bits r 5 in
-				let (a, r) = read_bits r 1 in
-				let (b, r) = read_bits r 1 in
-				let (c, r) = read_bits r 1 in
-				let (d, r) = read_bits r 1 in
+				let main_data = gs 9 in
+				let _ = gs 5 in
+				let a = gs 1 in
+				let b = gs 1 in
+				let c = gs 1 in
+				let d = gs 1 in
 				let side_scfi = [| [| a = 1; b = 1; c = 1; d = 1 |] |] in
-				let (side_gc1, r, new_so_far) = read_gc r 0 in
-				let (side_gc2, r, new_so_far) = read_gc r new_so_far in
-				({
+				let (side_gc1, new_so_far) = read_gc 0 in
+				let (side_gc2, new_so_far) = read_gc new_so_far in
+				{
 					side_main_data_begin = main_data;
 					side_scfi = side_scfi;
 					side_gc = [| [| side_gc1 |]; [| side_gc2 |] |];
-				}, r)
+				}
 			)
 			| _ -> (
-				let (main_data, r) = read_bits r 9 in
-				let (_, r) = read_bits r 3 in
-				let (a, r) = read_bits r 1 in
-				let (b, r) = read_bits r 1 in
-				let (c, r) = read_bits r 1 in
-				let (d, r) = read_bits r 1 in
-				let (e, r) = read_bits r 1 in
-				let (f, r) = read_bits r 1 in
-				let (g, r) = read_bits r 1 in
-				let (h, r) = read_bits r 1 in
+				let main_data = gs 9 in
+				let _ = gs 3 in
+				let a = gs 1 in
+				let b = gs 1 in
+				let c = gs 1 in
+				let d = gs 1 in
+				let e = gs 1 in
+				let f = gs 1 in
+				let g = gs 1 in
+				let h = gs 1 in
 				let side_scfi = [| [| a = 1; b = 1; c = 1; d = 1 |]; [| e = 1; f = 1; g = 1; h = 1 |] |] in
-				let (side_gc1, r, new_so_far) = read_gc r 0 in
-				let (side_gc2, r, new_so_far) = read_gc r new_so_far in
-				let (side_gc3, r, new_so_far) = read_gc r new_so_far in
-				let (side_gc4, r, new_so_far) = read_gc r new_so_far in
-				({
+				let (side_gc1, new_so_far) = read_gc 0 in
+				let (side_gc2, new_so_far) = read_gc new_so_far in
+				let (side_gc3, new_so_far) = read_gc new_so_far in
+				let (side_gc4, new_so_far) = read_gc new_so_far in
+				{
 					side_main_data_begin = main_data;
 					side_scfi = side_scfi;
 					side_gc = [| [| side_gc1; side_gc2 |]; [| side_gc3; side_gc4 |] |];
-				}, r)
+				}
 			)
 		)
 		| _ -> (
 
-			let read_gc r part2_3_offset = (
-				let (part2_3_length, r) = read_bits r 12 in
-				let (big_values, r) = read_bits r 9 in
-				let (global_gain, r) = read_bits r 8 in
-				let (scf_compress, r) = read_bits r 9 in
-				let (window_flag, r) = read_bits r 1 in
-				let (window, r) = if window_flag = 0 then (
-					let (huff1, r) = read_bits r 5 in
-					let (huff2, r) = read_bits r 5 in
-					let (huff3, r) = read_bits r 5 in
-					let (r0, r) = read_bits r 4 in
-					let (r1, r) = read_bits r 3 in
-					(Window_normal {
+			let read_gc part2_3_offset = (
+				let part2_3_length = gs 12 in
+				let big_values = gs 9 in
+				let global_gain = gs 8 in
+				let scf_compress = gs 9 in
+				let window_flag = gs 1 in
+				let window = if window_flag = 0 then (
+					let huff1 = gs 5 in
+					let huff2 = gs 5 in
+					let huff3 = gs 5 in
+					let r0 = gs 4 in
+					let r1 = gs 3 in
+					Window_normal {
 						normal_table_select1 = huff1;
 						normal_table_select2 = huff2;
 						normal_table_select3 = huff3;
 						normal_region_0_count = r0;
 						normal_region_1_count = r1;
-					}, r)
+					}
 				) else (
-					let (block_type_index, r) = read_bits r 2 in
-					let (mixed_block, r) = read_bits r 1 in
-					let (huff1, r) = read_bits r 5 in
-					let (huff2, r) = read_bits r 5 in
-					let (sb_gain1, r) = read_bits r 3 in
-					let (sb_gain2, r) = read_bits r 3 in
-					let (sb_gain3, r) = read_bits r 3 in
-					(Window_other {
+					let block_type_index = gs 2 in
+					let mixed_block = gs 1 in
+					let huff1 = gs 5 in
+					let huff2 = gs 5 in
+					let sb_gain1 = gs 3 in
+					let sb_gain2 = gs 3 in
+					let sb_gain3 = gs 3 in
+					Window_other {
 						other_block_type = [| Block_type_long; Block_type_start; Block_type_short; Block_type_stop |].(block_type_index);
 						other_mixed_block = (mixed_block = 1);
 						other_table_select1 = huff1;
@@ -886,10 +1320,10 @@ let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 						other_sub_block_gain1 = sb_gain1;
 						other_sub_block_gain2 = sb_gain2;
 						other_sub_block_gain3 = sb_gain3;
-					}, r)
+					}
 				) in
-				let (sf_scale, r) = read_bits r 1 in
-				let (count1_table, r) = read_bits r 1 in
+				let sf_scale = gs 1 in
+				let count1_table = gs 1 in
 				({
 					gc_part2_3_length = part2_3_length;
 					gc_part2_3_offset = part2_3_offset;
@@ -900,30 +1334,30 @@ let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 					gc_pre_flag = false; (* No pre flag for MPEG2 *)
 					gc_sf_scale = sf_scale;
 					gc_count1_table_1 = (count1_table = 1);
-				}, r, part2_3_offset + part2_3_length)
+				}, part2_3_offset + part2_3_length)
 			) in
 
 			match f.f1_header.header_channel_mode with
 			| ChannelMono -> (
-				let (main_data, r) = read_bits r 8 in
-				let (_, r) = read_bits r 1 in
-				let (side_gc, r, _) = read_gc r 0 in
-				({
+				let main_data = gs 8 in
+				let _ = gs 1 in
+				let (side_gc, _) = read_gc 0 in
+				{
 					side_main_data_begin = main_data;
 					side_scfi = [| |];
 					side_gc = [| [| side_gc |] |]
-				}, r)
+				}
 			)
 			| _ -> (
-				let (main_data, r) = read_bits r 8 in
-				let (_, r) = read_bits r 2 in
-				let (side_gc1, r, new_so_far) = read_gc r 0 in
-				let (side_gc2, r, new_so_far) = read_gc r new_so_far in
-				({
+				let main_data = gs 8 in
+				let _ = gs 2 in
+				let (side_gc1, new_so_far) = read_gc 0 in
+				let (side_gc2, new_so_far) = read_gc new_so_far in
+				{
 					side_main_data_begin = main_data;
 					side_scfi = [| |];
 					side_gc = [| [| side_gc1; side_gc2 |] |]
-				}, r)
+				}
 			) (* Mono / stereo *)
 		) (* MPEG 2/2.5 *)
 	in (* defines side_info *)
@@ -932,17 +1366,12 @@ let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 
 	let tab2 = tab ^ tab in
 
-(*
-	for granule = 0 to Array.length side_info.side_gc - 1 do
-		for channel = 0 to Array.length side_info.side_gc.(granule) - 1 do
-			if debug then Printf.printf "DOING GR %d, CH %d\n" granule channel;
-			decode_granule_channel f side_info granule channel;
-		done;
-	done;
-*)
-
 	let decoded = (
 		let k = f.f1_header in
+		(* This is needed for the new async quant readers *)
+		let data_ptr = Ptr.Ref.to_ptr f.f1_data in
+		let data_ptr_ref = Ptr.Ref.of_ptr data_ptr in
+
 		match (f.f1_header.header_id, f.f1_header.header_channel_mode) with
 		| (MPEG1, ChannelMono) -> (
 			(* Frame has 1 channel, 2 granules *)
@@ -950,25 +1379,59 @@ let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 			if debug then Printf.printf "DECODE FRAME %d (MPEG1, MONO)\n" f.f1_num;
 
 			if debug then (
-				Printf.printf "%sSide %S\n" tab2 (to_hex f.f1_side.side_raw);
-				Printf.printf "%sData %S\n" tab2 (to_hex f.f1_data);
+				Printf.printf "%sSide %S\n" tab2 (Ptr.Ref.to_HEX f.f1_side.side_raw);
+				Printf.printf "%sData %S\n" tab2 (Ptr.Ref.to_HEX f.f1_data);
 				print_side ~tabs:tab2 side_info;
 			);
 
 			if debug then Printf.printf "%sGr0:\n" tab;
-			let (scf0,r0) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 [| false;false;false;false |]  None       side_info.side_gc.(0).(0) (f.f1_data, side_info.side_gc.(0).(0).gc_part2_3_offset) in
-			let (q0, error0) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r0 (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
+(*
+			let s = {
+				(Ptr.Ref.new_seq f.f1_data) with Ptr.Ref.seq_at = side_info.side_gc.(0).(0).gc_part2_3_offset
+(*
+				Ptr.Ref.seq_ref = f.f1_data;
+				Ptr.Ref.seq_at = side_info.side_gc.(0).(0).gc_part2_3_offset;
+				Ptr.Ref.seq_get_fast_int = 0;
+				Ptr.Ref.seq_get_fast_next_byte = 0;
+*)
+			} in
+*)
+			let s = Ptr.Ref.new_seq f.f1_data in
+			Ptr.Ref.set_seq s side_info.side_gc.(0).(0).gc_part2_3_offset;
 
+			(* The rehuff does nothing for non-normal windows, so just get the scf bands for non-short blocks *)
+			let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
+
+			acc_ref before_decode_ticks_ref;
+			let scf0 = read_scalefactors_m1 ~debug:debug ~tabs:tab2 [| false;false;false;false |]  None       side_info.side_gc.(0).(0) s in
+			acc_ref decode_scf_ticks_ref;
+			let get_decode_0 = decode_granule_async debug k data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) side_info.side_gc.(0).(0) scf_bands_ptr process_function 0 in
+(*			let (q0, qp0, error0) = read_quantizers ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in*)
+			acc_ref decode_quant_ticks_ref;
+(*			let gc0 = rehuff_granule debug qp0 process_function side_info.side_gc.(0).(0) scf_bands_ptr in*)
+(*			let get_gc0 = rehuff_granule_async debug qp0 process_function side_info.side_gc.(0).(0) scf_bands_ptr in*)
+
+			(*s.Ptr.Ref.seq_at <- side_info.side_gc.(1).(0).gc_part2_3_offset;*)
+			Ptr.Ref.set_seq s side_info.side_gc.(1).(0).gc_part2_3_offset;
 			if debug then Printf.printf "%sGr1:\n" tab;
-			let (scf1,r1) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 side_info.side_scfi.(0)       (Some scf0) side_info.side_gc.(1).(0) (f.f1_data, side_info.side_gc.(1).(0).gc_part2_3_offset) in
-			let (q1, error1) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(0) r1 (side_info.side_gc.(1).(0).gc_part2_3_length + side_info.side_gc.(1).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
+			let scf1 = read_scalefactors_m1 ~debug:debug ~tabs:tab2 side_info.side_scfi.(0)       (Some scf0) side_info.side_gc.(1).(0) s in
+			acc_ref decode_scf_ticks_ref;
+			let get_decode_1 = decode_granule_async debug k data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(1).(0).gc_part2_3_length + side_info.side_gc.(1).(0).gc_part2_3_offset) side_info.side_gc.(1).(0) scf_bands_ptr process_function 1 in
+(*			let (q1, qp1, error1) = read_quantizers ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(0) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(1).(0).gc_part2_3_length + side_info.side_gc.(1).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in*)
+			acc_ref decode_quant_ticks_ref;
+(*			let gc1 = rehuff_granule debug qp1 side_info.side_gc.(1).(0) scf_bands_ptr in*)
+(*			let get_gc1 = rehuff_granule_async debug qp1 side_info.side_gc.(1).(0) scf_bands_ptr in*)
+
+			let (q0, qp0, error0, gc0) = sync_decode get_decode_0 in
+			let (q1, qp1, error1, gc1) = sync_decode get_decode_1 in
 
 			(
 				M1_frame_data {
 					m1_header = f.f1_header;
-					m1_side_info = side_info;
+					m1_side_info = {side_info with side_gc = [| [| (*Event.sync get_*)gc0 |]; [| (*Event.sync get_*)gc1 |] |]};
 					m1_scalefactors = [| [| scf0  |]; [| scf1 |] |];
 					m1_quantizers = [| [| q0 |]; [| q1 |] |];
+					m1_quantizer_ptrs = [| [| qp0 |]; [| qp1 |] |];
 					m1_starting_f1 = f;
 				}
 			,
@@ -981,36 +1444,83 @@ let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 			if debug then Printf.printf "DECODE FRAME %d (MPEG1, STEREO)\n" f.f1_num;
 
 			if debug then (
-				Printf.printf "%sSide %S\n" tab (to_hex f.f1_side.side_raw);
-				Printf.printf "%sData %S\n" tab (to_hex f.f1_data);
+				Printf.printf "%sSide %S\n" tab (Ptr.Ref.to_HEX f.f1_side.side_raw);
+				Printf.printf "%sData %S\n" tab (Ptr.Ref.to_HEX f.f1_data);
 				print_side ~tabs:tab side_info;
 			);
 
-(*Printf.fprintf file_in "%S\n" (String.sub (to_bin f.transitData) 0 f.transitBits);*)
-(*flush file_out;*)
+			if debug then Printf.printf "%sGr0 Ch0:\n%!" tab;
+			let s = Ptr.Ref.new_seq data_ptr_ref in
+			Ptr.Ref.set_seq s side_info.side_gc.(0).(0).gc_part2_3_offset;
 
-			if debug then Printf.printf "%sGr0 Ch0:\n" tab;
-			let (scf00,r00) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 [| false;false;false;false |]  None        side_info.side_gc.(0).(0) (f.f1_data, side_info.side_gc.(0).(0).gc_part2_3_offset) in
-			let (q00,error00) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r00 (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
+			(* things for inline rehuff *)
+			(* The rehuff does nothing for non-normal windows, so just get the scf bands for non-short blocks *)
+			let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
 
-			if debug then Printf.printf "%sGr0 Ch1:\n" tab;
-			let (scf01,r01) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 [| false;false;false;false |]  None        side_info.side_gc.(0).(1) (f.f1_data, side_info.side_gc.(0).(1).gc_part2_3_offset) in
-			let (q01,error01) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(1) r01 (side_info.side_gc.(0).(1).gc_part2_3_length + side_info.side_gc.(0).(1).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
 
-			if debug then Printf.printf "%sGr1 Ch0:\n" tab;
-			let (scf10,r10) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 side_info.side_scfi.(0)       (Some scf00) side_info.side_gc.(1).(0) (f.f1_data, side_info.side_gc.(1).(0).gc_part2_3_offset) in
-			let (q10,error10) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(0) r10 (side_info.side_gc.(1).(0).gc_part2_3_length + side_info.side_gc.(1).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
+			acc_ref before_decode_ticks_ref;
+			let scf00 = read_scalefactors_m1 ~debug:debug ~tabs:tab2 [| false;false;false;false |]  None        side_info.side_gc.(0).(0) s in
+			acc_ref decode_scf_ticks_ref;
+			let get_decode_00 = (*(q00, qp00, error00, gc00) = sync_decode @@*) decode_granule_async debug k data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) side_info.side_gc.(0).(0) scf_bands_ptr process_function 0 in
+(*			let (q00,qp00,error00) = read_quantizers ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref 1 in*)
+			(* Test the async quantizers *)
+(*
+				if q00 <> q00_test then (
+				Printf.printf "ERROR: q's don't match up on frame %d:\n" f.f1_num;
+				for i = 0 to Array.length q00 - 1 do
+					Printf.printf "%8d%8d\n" q00.(i) q00_test.(i)
+				done
+			);
+*)
+			acc_ref decode_quant_ticks_ref;
+			(* Now try to rehuff *)
+(*			let gc00 = rehuff_granule debug qp00 side_info.side_gc.(0).(0) scf_bands_ptr in*)
+(*			let get_gc00 = rehuff_granule_async debug qp00 side_info.side_gc.(0).(0) scf_bands_ptr in*)
 
-			if debug then Printf.printf "%sGr1 Ch1:\n" tab;
-			let (scf11,r11) = read_scalefactors_m1 ~debug:debug ~tabs:tab2 side_info.side_scfi.(1)       (Some scf10) side_info.side_gc.(1).(1) (f.f1_data, side_info.side_gc.(1).(1).gc_part2_3_offset) in
-			let (q11,error11) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(1) r11 (side_info.side_gc.(1).(1).gc_part2_3_length + side_info.side_gc.(1).(1).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
+			if debug then Printf.printf "%sGr0 Ch1:\n%!" tab;
+			Ptr.Ref.set_seq s side_info.side_gc.(0).(1).gc_part2_3_offset;
+			let scf01 = read_scalefactors_m1 ~debug:debug ~tabs:tab2 [| false;false;false;false |]  None        side_info.side_gc.(0).(1) s in
+			acc_ref decode_scf_ticks_ref;
+			let get_decode_01 = (*(q01, qp01, error01, gc01) = sync_decode @@*) decode_granule_async debug k data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(1).gc_part2_3_length + side_info.side_gc.(0).(1).gc_part2_3_offset) side_info.side_gc.(0).(1) scf_bands_ptr process_function 1 in
+(*			let (q01,qp01,error01) = read_quantizers ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(1) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(1).gc_part2_3_length + side_info.side_gc.(0).(1).gc_part2_3_offset) recompress_freq_overflow_warn_ref in*)
+			acc_ref decode_quant_ticks_ref;
+(*			let gc01 = rehuff_granule debug qp01 side_info.side_gc.(0).(1) scf_bands_ptr in*)
+(*			let get_gc01 = rehuff_granule_async debug qp01 side_info.side_gc.(0).(1) scf_bands_ptr in*)
+
+			if debug then Printf.printf "%sGr1 Ch0:\n%!" tab;
+			Ptr.Ref.set_seq s side_info.side_gc.(1).(0).gc_part2_3_offset;
+			let scf10 = read_scalefactors_m1 ~debug:debug ~tabs:tab2 side_info.side_scfi.(0)       (Some scf00) side_info.side_gc.(1).(0) s in
+			acc_ref decode_scf_ticks_ref;
+			let get_decode_10 = (*(q10, qp10, error10, gc10) = sync_decode @@*) decode_granule_async debug k data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(1).(0).gc_part2_3_length + side_info.side_gc.(1).(0).gc_part2_3_offset) side_info.side_gc.(1).(0) scf_bands_ptr process_function 2 in
+(*			let (q10,qp10,error10) = read_quantizers ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(0) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(1).(0).gc_part2_3_length + side_info.side_gc.(1).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in*)
+			acc_ref decode_quant_ticks_ref;
+(*			let gc10 = rehuff_granule debug qp10 side_info.side_gc.(1).(0) scf_bands_ptr in*)
+(*			let get_gc10 = rehuff_granule_async debug qp10 side_info.side_gc.(1).(0) scf_bands_ptr in*)
+
+			if debug then Printf.printf "%sGr1 Ch1:\n%!" tab;
+			Ptr.Ref.set_seq s side_info.side_gc.(1).(1).gc_part2_3_offset;
+			let scf11 = read_scalefactors_m1 ~debug:debug ~tabs:tab2 side_info.side_scfi.(1)       (Some scf10) side_info.side_gc.(1).(1) s in
+			acc_ref decode_scf_ticks_ref;
+			let get_decode_11 = (*(q11, qp11, error11, gc11) = sync_decode @@*) decode_granule_async debug k data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(1).(1).gc_part2_3_length + side_info.side_gc.(1).(1).gc_part2_3_offset) side_info.side_gc.(1).(1) scf_bands_ptr process_function 3 in
+(*			let (q11,qp11,error11) = read_quantizers ~debug:debug ~tabs:tab2 k side_info.side_gc.(1).(1) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(1).(1).gc_part2_3_length + side_info.side_gc.(1).(1).gc_part2_3_offset) recompress_freq_overflow_warn_ref in*)
+			acc_ref decode_quant_ticks_ref;
+(*			let gc11 = rehuff_granule debug qp11 side_info.side_gc.(1).(1) scf_bands_ptr in*)
+(*			let get_gc11 = rehuff_granule_async debug qp11 side_info.side_gc.(1).(1) scf_bands_ptr in*)
+
+			let (q00, qp00, error00, gc00) = sync_decode get_decode_00 in
+			let (q01, qp01, error01, gc01) = sync_decode get_decode_01 in
+			let (q10, qp10, error10, gc10) = sync_decode get_decode_10 in
+			let (q11, qp11, error11, gc11) = sync_decode get_decode_11 in
+
+			if debug then Printf.printf "Done decoding\n%!";
 
 			(
 				M1_frame_data {
 					m1_header = f.f1_header;
-					m1_side_info = side_info;
+					m1_side_info = {side_info with side_gc = [| [| (*Event.sync get_*)gc00; (*Event.sync get_*)gc01 |]; [| (*Event.sync get_*)gc10; (*Event.sync get_*)gc11 |] |]};
 					m1_scalefactors = [| [| scf00; scf01 |]; [| scf10; scf11 |] |];
 					m1_quantizers = [| [| q00; q01 |]; [| q10; q11 |] |];
+					m1_quantizer_ptrs = [| [| qp00; qp01 |]; [| qp10; qp11 |] |];
 					m1_starting_f1 = f;
 				}
 			,
@@ -1021,55 +1531,88 @@ let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 			if debug then Printf.printf "DECODE FRAME %d (MPEG2, MONO)\n" f.f1_num;
 
 			if debug then (
-				Printf.printf "%sSide %S\n" tab2 (to_hex f.f1_side.side_raw);
-				Printf.printf "%sData %S\n" tab2 (to_hex f.f1_data);
+				Printf.printf "%sSide %S\n" tab2 (Ptr.Ref.to_HEX f.f1_side.side_raw);
+				Printf.printf "%sData %S\n" tab2 (Ptr.Ref.to_HEX f.f1_data);
 				print_side ~tabs:tab2 side_info;
 			);
 
 			if debug then Printf.printf "%sGr: (USING MPEG1 QUANTIZER FUNCTION)\n" tab;
-			let (scf, r) = read_scalefactors_m2 ~debug:debug ~tabs:tab2 false side_info.side_gc.(0).(0) (f.f1_data, side_info.side_gc.(0).(0).gc_part2_3_offset) in
-			let (q, error) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
+			let s = Ptr.Ref.new_seq f.f1_data in
+			Ptr.Ref.set_seq s side_info.side_gc.(0).(0).gc_part2_3_offset;
+
+			let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
+
+			acc_ref before_decode_ticks_ref;
+			let scf = read_scalefactors_m2 ~debug:debug ~tabs:tab2 false side_info.side_gc.(0).(0) s in
+			acc_ref decode_scf_ticks_ref;
+			let (q, qp, error) = read_quantizers ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
+			acc_ref decode_quant_ticks_ref;
+			let gc = rehuff_granule debug qp process_function side_info.side_gc.(0).(0) scf_bands_ptr in
+			(* There really isn't any need to do this async since it is gathered right after, but it fits with the rest of the function *)
+(*			let get_gc = rehuff_granule_async debug qp side_info.side_gc.(0).(0) scf_bands_ptr in*)
 
 			(
 				M2_frame_data {
 					m2_header = f.f1_header;
-					m2_side_info = side_info;
-					m2_data_deleteme = f.f1_data;
+					m2_side_info = {side_info with side_gc = [| [| (*Event.sync get_*)gc |] |]};
 					m2_scalefactors = [| scf |];
 					m2_quantizers = [| q |];
+					m2_quantizer_ptrs = [| qp |];
 					m2_starting_f1 = f;
 				}
 			,
 				error
 			)
 
-(*			(M2_frame_data {m2_header = f.f1_header; m2_side_info = side_info; m2_data_deleteme = f.f1_data; m2_starting_f1 = f}, false)*)
+(*			(M2_frame_data {m2_header = f.f1_header; m2_side_info = side_info; m2_starting_f1 = f}, false)*)
 		)
 		| (_, _) -> (
 			if debug then Printf.printf "DECODE FRAME %d (MPEG2, STEREO)\n" f.f1_num;
 
 			if debug then (
-				Printf.printf "%sSide %S\n" tab2 (to_hex f.f1_side.side_raw);
-				Printf.printf "%sData %S\n" tab2 (to_hex f.f1_data);
+				Printf.printf "%sSide %S\n" tab2 (Ptr.Ref.to_HEX f.f1_side.side_raw);
+				Printf.printf "%sData %S\n" tab2 (Ptr.Ref.to_HEX f.f1_data);
 				print_side ~tabs:tab2 side_info;
 			);
 
 			(* Remember that the IS should only be set on the right channel; the left channel uses the same scalefactors as non-IS GCs *)
 			if debug then Printf.printf "%sGr0: (USING MPEG1 QUANTIZER READER)\n" tab;
-			let (scf0, r0) = read_scalefactors_m2 ~debug:debug ~tabs:tab2         false         side_info.side_gc.(0).(0) (f.f1_data, side_info.side_gc.(0).(0).gc_part2_3_offset) in
-			let (q0, error0) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) r0 (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
+(*			let s = {(Ptr.Ref.new_seq f.f1_data) with Ptr.Ref.seq_at = side_info.side_gc.(0).(0).gc_part2_3_offset(*Ptr.Ref.seq_ref = f.f1_data; Ptr.Ref.seq_at = side_info.side_gc.(0).(0).gc_part2_3_offset*)} in*)
+			let s = Ptr.Ref.new_seq f.f1_data in
+			Ptr.Ref.set_seq s side_info.side_gc.(0).(0).gc_part2_3_offset;
+
+			let scf_bands_ptr = global_scalefactors_ptr f.f1_header.header_samplerate false in
+
+			acc_ref before_decode_ticks_ref;
+			let scf0 = read_scalefactors_m2 ~debug:debug ~tabs:tab2         false         side_info.side_gc.(0).(0) s in
+			acc_ref decode_scf_ticks_ref;
+			let get_decode_0 = decode_granule_async debug k data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) side_info.side_gc.(0).(0) scf_bands_ptr process_function 0 in
+(*			let (q0, qp0, error0) = read_quantizers ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(0) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(0).gc_part2_3_length + side_info.side_gc.(0).(0).gc_part2_3_offset) recompress_freq_overflow_warn_ref in*)
+			acc_ref decode_quant_ticks_ref;
+(*			let gc0 = rehuff_granule debug qp0 side_info.side_gc.(0).(0) scf_bands_ptr in*)
+(*			let get_gc0 = rehuff_granule_async debug qp0 side_info.side_gc.(0).(0) scf_bands_ptr in*)
 
 			if debug then Printf.printf "%sGr1: (USING MPEG1 QUANTIZER READER)\n" tab;
-			let (scf1, r1) = read_scalefactors_m2 ~debug:debug ~tabs:tab2 f.f1_header.header_is side_info.side_gc.(0).(1) (f.f1_data, side_info.side_gc.(0).(1).gc_part2_3_offset) in
-			let (q1, error1) = read_quantizers_m1 ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(1) r1 (side_info.side_gc.(0).(1).gc_part2_3_length + side_info.side_gc.(0).(1).gc_part2_3_offset) recompress_freq_overflow_warn_ref in
+			(*s.Ptr.Ref.seq_at <- side_info.side_gc.(0).(1).gc_part2_3_offset;*)
+			Ptr.Ref.set_seq s side_info.side_gc.(0).(1).gc_part2_3_offset;
+			let scf1 = read_scalefactors_m2 ~debug:debug ~tabs:tab2 f.f1_header.header_is side_info.side_gc.(0).(1) s in
+			acc_ref decode_scf_ticks_ref;
+			let get_decode_1 = decode_granule_async debug k data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(1).gc_part2_3_length + side_info.side_gc.(0).(1).gc_part2_3_offset) side_info.side_gc.(0).(1) scf_bands_ptr process_function 1 in
+(*			let (q1, qp1, error1) = read_quantizers ~debug:debug ~tabs:tab2 k side_info.side_gc.(0).(1) data_ptr s.Ptr.Ref.seq_at (side_info.side_gc.(0).(1).gc_part2_3_length + side_info.side_gc.(0).(1).gc_part2_3_offset) recompress_freq_overflow_warn_ref in*)
+			acc_ref decode_quant_ticks_ref;
+(*			let gc1 = rehuff_granule debug qp1 side_info.side_gc.(0).(1) scf_bands_ptr in*)
+(*			let get_gc1 = rehuff_granule_async debug qp1 side_info.side_gc.(0).(1) scf_bands_ptr in*)
+
+			let (q0, qp0, error0, gc0) = sync_decode get_decode_0 in
+			let (q1, qp1, error1, gc1) = sync_decode get_decode_1 in
 
 			(
 				M2_frame_data {
 					m2_header = f.f1_header;
-					m2_side_info = side_info;
-					m2_data_deleteme = f.f1_data;
+					m2_side_info = {side_info with side_gc = [| [| (*Event.sync get_*)gc0; (*Event.sync get_*)gc1 |] |]};
 					m2_scalefactors = [| scf0; scf1 |];
 					m2_quantizers = [| q0; q1 |];
+					m2_quantizer_ptrs = [| qp0; qp1 |];
 					m2_starting_f1 = f;
 				}
 			,
@@ -1077,10 +1620,11 @@ let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 			)
 
 
-(*			(M2_frame_data {m2_header = f.f1_header; m2_side_info = side_info; m2_data_deleteme = f.f1_data; m2_scalefactors = [||]; m2_quantizers = [||]; m2_starting_f1 = f}, false)*)
+(*			(M2_frame_data {m2_header = f.f1_header; m2_side_info = side_info; m2_scalefactors = [||]; m2_quantizers = [||]; m2_starting_f1 = f}, false)*)
 		)
 	) in
 
+	if debug then Printf.printf "Fully decoded and synced with process threads\n";
 (*	decode_granule_channel f side_info*)
 
 	decoded
@@ -1090,927 +1634,6 @@ let decode_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
 
 
 
-
-(************************************************************************************************************************)
-(* REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME REHUFF FRAME *)
-(************************************************************************************************************************)
-let deleteme_ref = ref true;;
-let rehuff_frame ?(debug=false) frame = (
-
-(*	let debug = (if !deleteme_ref then (deleteme_ref := false; true) else false) in*)
-(*	let debug = true in*)
-	if debug then Printf.printf "\n";
-
-	let rehuff_granule quants gc scf_bands = (match gc.gc_window with
-		| Window_other w -> {
-			gc_part2_3_length = gc.gc_part2_3_length; (* This isn't used for anything during the re-encoding process, so it's OK to not calculate it here *)
-			gc_part2_3_offset = gc.gc_part2_3_offset; (* This isn't actually used for anything... *)
-			gc_big_values = gc.gc_big_values; (* This is NOT recalculated during encoding *)
-			gc_global_gain = gc.gc_global_gain;
-			gc_scf_compress_index = gc.gc_scf_compress_index;
-			gc_window = Window_other w;
-			gc_pre_flag = gc.gc_pre_flag;
-			gc_sf_scale = gc.gc_sf_scale;
-			gc_count1_table_1 = gc.gc_count1_table_1;
-		}
-		| Window_normal w -> (
-
-			let num_scf_bands = Array.length scf_bands - 1 in
-
-			let find_quant_band q = (
-				let rec find_quant_band_rec next_band = if next_band > num_scf_bands then (num_scf_bands, q - scf_bands.(num_scf_bands),false) else (
-					if q < scf_bands.(next_band) then (
-						(pred next_band, q - scf_bands.(pred next_band), q = scf_bands.(next_band) - 1)
-					) else (
-						find_quant_band_rec (succ next_band)
-					)
-				) in
-				if q < 0 then (-1,-1,true) else find_quant_band_rec 1
-			) in
-
-			let last_two_zero = (quants.(Array.length quants - 1) = 0 && quants.(Array.length quants - 2) = 0) in
-			let bits_per_band_table = Array.init num_scf_bands (fun b -> Array.init 32 (fun t -> if t = 4 || t = 14 then 100000 else 0)) in
-(*			let bits_per_first_range_table = Array.init 16 (fun b -> Array.init 32 (fun t -> if t = 4 || t = 14 then 100000 else 0)) in*) (* .(0) is the number of bits when the first partition ends at the end of band 0, etc. *)
-			let zeros_at_beginning_of_band = Array.make num_scf_bands max_int in
-
-			let last_nonzero_quant_ref = ref ~-1 in
-			let last_nonzero_band_ref = ref ~-1 in
-			let last_big_quant_ref = ref ~-1 in
-			let last_big_band_ref = ref ~-1 in
-			
-			let rec do_band band_now = if band_now < 0 then () else (
-				let first_quant_in_band = scf_bands.(band_now) in
-				let num_quants_in_band = scf_bands.(succ band_now) - first_quant_in_band in
-				let num_15_or_more_in_band_ref = ref 0 in
-				let max_quant_in_band_ref = ref 0 in
-				let bt = bits_per_band_table.(band_now) in
-				
-				let rec do_quant quant_add = if quant_add < 0 then () else (
-					let quant_total = first_quant_in_band + quant_add in
-					let x = abs quants.(quant_total) in
-					let y = abs quants.(quant_total + 1) in
-					let x15 = min x 15 in
-					let y15 = min y 15 in
-
-					if x15 = 15 then incr num_15_or_more_in_band_ref;
-					if y15 = 15 then incr num_15_or_more_in_band_ref;
-
-					(
-						(* Update the last big/nonzero quants *)
-						if x15 > 1 || y15 > 1 then (
-							last_nonzero_quant_ref := max (quant_total + 1) !last_nonzero_quant_ref;
-							last_big_quant_ref := max (quant_total + 1) !last_big_quant_ref;
-						) else if x15 = 1 || y15 = 1 then (
-							last_nonzero_quant_ref := max (quant_total + 1) !last_nonzero_quant_ref;
-						)
-					);
-
-					max_quant_in_band_ref := max !max_quant_in_band_ref (max x y);
-
-(*if !last_nonzero_quant_ref > -1 then ( *)
-
-					(
-						(* Add the bits to the bits_per_band_table *)
-						let code = (x15 lsl 4) lor y15 in
-						for t = 0 to 15 do
-							if t <> 4 && t <> 14 then (
-								match global_ht_encode.(t).(code) with
-								| (0,1) -> bt.(t) <- 100000
-								| (b,_) -> bt.(t) <- bt.(t) + b
-							)
-						done;
-						(* Do tables 16 and 24 *)
-						(
-							let (b,_) = global_ht_encode.(16).(code) in
-							bt.(16) <- bt.(16) + b
-						);
-						(
-							let (b,_) = global_ht_encode.(24).(code) in
-							bt.(24) <- bt.(24) + b
-						);
-					);
-					
-					if x <> 0 || y <> 0 then (
-						(* Update the number of zeros at the beginning of the band *)
-						zeros_at_beginning_of_band.(band_now) <- quant_add
-					);
-
-(* ); *)
-					
-					do_quant (quant_add - 2)
-				) in
-				do_quant (num_quants_in_band - 2);
-
-				(
-					(* Update tables 16-23 and 24-31, using tables 16 and 24 for the base bits, and num_15_or_more_in_band_ref for linbit calculation *)
-					let b16 = bt.(16) in
-					let b24 = bt.(24) in
-					let n15 = !num_15_or_more_in_band_ref in
-					let mq = !max_quant_in_band_ref in
-					bt.(16) <- if mq >   16 then 100000 else b16 + n15 * 1;
-					bt.(17) <- if mq >   18 then 100000 else b16 + n15 * 2;
-					bt.(18) <- if mq >   22 then 100000 else b16 + n15 * 3;
-					bt.(19) <- if mq >   30 then 100000 else b16 + n15 * 4;
-					bt.(20) <- if mq >   78 then 100000 else b16 + n15 * 6;
-					bt.(21) <- if mq >  270 then 100000 else b16 + n15 * 8;
-					bt.(22) <- if mq > 1038 then 100000 else b16 + n15 * 10;
-					bt.(23) <- if mq > 8206 then 100000 else b16 + n15 * 13;
-					bt.(24) <- if mq >   30 then 100000 else b24 + n15 * 4;
-					bt.(25) <- if mq >   46 then 100000 else b24 + n15 * 5;
-					bt.(26) <- if mq >   78 then 100000 else b24 + n15 * 6;
-					bt.(27) <- if mq >  142 then 100000 else b24 + n15 * 7;
-					bt.(28) <- if mq >  270 then 100000 else b24 + n15 * 8;
-					bt.(29) <- if mq >  526 then 100000 else b24 + n15 * 9;
-					bt.(30) <- if mq > 2062 then 100000 else b24 + n15 * 11;
-					bt.(31) <- if mq > 8206 then 100000 else b24 + n15 * 13;
-					(* Also void tables 13 and 15 if the max quant is greater than 15. These two tables are not thrown out during the quant iteration *)
-					if mq > 15 then (
-						bt.(13) <- 100000;
-						bt.(15) <- 100000;
-					)
-				);
-				
-				(* Update the last big/nonzero band *)
-				if !last_big_quant_ref >= 0 then (
-					last_nonzero_band_ref := max !last_nonzero_band_ref band_now;
-					last_big_band_ref := max !last_big_band_ref band_now;
-				) else if !last_nonzero_quant_ref >= 0 then (
-					last_nonzero_band_ref := max !last_nonzero_band_ref band_now;
-				);
-				
-				do_band (band_now - 1)
-			) in
-			do_band (pred num_scf_bands);
-
-			let do_ends_ref = ref (
-				if true then (
-					if last_two_zero then (
-						let rec find_end so_far now = if now <= !last_big_band_ref then so_far else (
-							if zeros_at_beginning_of_band.(now) >= scf_bands.(now + 1) - scf_bands.(now) then (
-								(* The entire band is zero; check to see if the next band has any zeros at the beginning *)
-								(* Note that there is always at least 4 quants in a band, therefore the endpoint at two quants before the last zero is always there *)
-								if zeros_at_beginning_of_band.(succ now) = 0 then (
-									let quants_in_band = scf_bands.(now + 1) - scf_bands.(now) in
-									find_end ((now, quants_in_band - 3, false) :: (now, quants_in_band - 1, true) :: so_far) (pred now)
-								) else (
-									(* Already been added; ignore *)
-									find_end so_far (pred now)
-								)
-							) else if zeros_at_beginning_of_band.(now) > 3 then (
-								(* Mark as TWO possible end points - one at the last zero and one two quants before that *)
-								find_end ((now, zeros_at_beginning_of_band.(now) - 3, false) :: (now, zeros_at_beginning_of_band.(now) - 1, false) :: so_far) (pred now)
-							) else if zeros_at_beginning_of_band.(now) > 1 then (
-								find_end ((now, zeros_at_beginning_of_band.(now) - 1, false) :: so_far) (pred now)
-							) else (
-								(* No zeros! Keep going... *)
-								find_end so_far (pred now)
-							)
-						) in
-						find_end [] !last_nonzero_band_ref 
-					) else (
-						(* Last 2 are NOT 0 *)
-						(* This can be optimized... *)
-						[]
-					)
-				) else (
-					[]
-				)
-			) in
-			
-			if last_two_zero then (
-				if !last_big_quant_ref < 0 then (
-					(* There are no big values! Oh noes! *)
-					do_ends_ref := (-1,-1,true) :: !do_ends_ref;
-				) else if !last_big_quant_ref = scf_bands.(num_scf_bands) - 1 then (
-					(* It's the last quant *)
-					do_ends_ref := (num_scf_bands - 1, scf_bands.(num_scf_bands) - scf_bands.(num_scf_bands - 1) - 1, true) :: !do_ends_ref
-				) else (
-					(* Normal *)
-					do_ends_ref := find_quant_band !last_big_quant_ref :: find_quant_band (!last_big_quant_ref + 2) :: !do_ends_ref
-				)
-			) else (
-				let real_end = !last_big_quant_ref lor 3 in
-				if real_end < 0 then (
-					(* There are no big values! Oh noes! *)
-					do_ends_ref := (-1,-1,true) :: !do_ends_ref;
-				) else (
-					(* Normal *)
-					do_ends_ref := find_quant_band real_end :: !do_ends_ref
-				)
-			);
-			
-			if debug then (
-				Printf.printf "  Last two are zero?  %B\n" last_two_zero;
-				Printf.printf "  Last nonzero quant: %d in band %d\n" !last_nonzero_quant_ref !last_nonzero_band_ref;
-				Printf.printf "  Last big quant:     %d in band %d\n" !last_big_quant_ref !last_big_band_ref;
-				Printf.printf "  Bits per band table:\n";
-				Array.iter (fun band ->
-					Printf.printf "  ";
-					Array.iter (fun table ->
-						if table >= 100000 then (
-							Printf.printf "    -"
-						) else (
-							Printf.printf " %4d" table
-						)
-					) band;
-					Printf.printf "\n";
-				) bits_per_band_table;
-				Printf.printf "  Zeros at beginning of band:\n";
-				Printf.printf "  ";
-				Array.iter (fun band -> if band = max_int then Printf.printf " ALL" else Printf.printf " %3d" band) zeros_at_beginning_of_band;
-				Printf.printf "\n";
-				Printf.printf "  Ends to check:\n";
-				Printf.printf "   [";
-				List.iter (fun (a,b,c) -> Printf.printf " (%d,%d,%B)" a b c) !do_ends_ref;
-				Printf.printf " ]\n";
-			);
-
-			(* RANGE CACHE! *)
-			let range_cache = Array.init num_scf_bands (fun a -> Array.init (num_scf_bands - a) (fun b -> None)) in
-			let cache a b = (
-				match range_cache.(a).(b - a) with
-				| Some x -> (if debug then Printf.printf "O"; x)
-				| None -> (
-					if debug then Printf.printf "X";
-					let rec check_table smallest_bits smallest_table t = (
-						if t > 31 then (
-							(smallest_bits, smallest_table)
-						) else (
-							let rec check_band so_far band_now = (
-								if band_now > b then (
-									so_far
-								) else (
-									check_band (so_far + bits_per_band_table.(band_now).(t)) (succ band_now)
-								)
-							) in
-							let current_table_bits = check_band 0 a in
-							if current_table_bits = 0 then (
-								(* Can't get much smaller than 0 *)
-								(t, 0)
-							) else if current_table_bits < smallest_bits then (
-								check_table current_table_bits t (succ t)
-							) else (
-								check_table smallest_bits smallest_table (succ t)
-							)
-						)
-					) in
-					let answer = check_table max_int ~-1 0 in
-					range_cache.(a).(b - a) <- Some answer;
-					answer
-				)
-			) in
-
-			(* Use table 1? *)
-			let smallest_part1 q_from q_to = (
-				let num_part1 = (q_to - q_from) lor 3 + 1 in
-				let table1_bits = num_part1 in
-				let table0_bits = (
-					let rec iter so_far now = (
-						if now > q_to then so_far else (
-							if now + 3 < Array.length quants then (
-								let (bits,_) = global_ht_encode_count1.(0).(abs quants.(now) lsl 3 lor abs quants.(now + 1) lsl 2 lor abs quants.(now + 2) lsl 1 lor abs quants.(now + 3)) in
-								iter (so_far + bits) (now + 4)
-							) else if now + 3 = Array.length quants then (
-								(* NONE OF THESE SHOULD HAPPEN! *)
-								let (bits,_) = global_ht_encode_count1.(0).(abs quants.(now) lsl 3 lor abs quants.(now + 1) lsl 2 lor abs quants.(now + 2) lsl 1) in
-								(so_far + bits)
-							) else if now + 2 = Array.length quants then (
-								let (bits,_) = global_ht_encode_count1.(0).(abs quants.(now) lsl 3 lor abs quants.(now + 1) lsl 2) in
-								(so_far + bits)
-							) else if now + 1 = Array.length quants then (
-								let (bits,_) = global_ht_encode_count1.(0).(abs quants.(now) lsl 3) in
-								(so_far + bits)
-							) else (
-								so_far
-							)
-						)
-					) in
-					iter 0 q_from
-				) in
-				(table1_bits < table0_bits, min table1_bits table0_bits)
-			) in
-
-			(* Now check all the ends in !do_ends_ref *)
-			let smallest_config = List.fold_left (fun (so_far_bits, so_far_config) (new_end_band, new_end_quant, new_end_full) ->
-				if debug then Printf.printf "   (%d,%d,%B):\n" new_end_band new_end_quant new_end_full;
-				let (bits,config) = if new_end_band < 0 then (
-					(* No big values! *)
-					if debug then Printf.printf "    No big values; use only part1\n";
-					let (use_table_1, bits) = smallest_part1 0 !last_nonzero_quant_ref in
-					(bits, (0,0,0,0,0,0,use_table_1))
-				) else (
-					(* Some big values *)
-					let last_quant = scf_bands.(new_end_band) + new_end_quant in
-					let (part1_table_1, part1_bits) = smallest_part1 (succ last_quant) !last_nonzero_quant_ref in
-					if debug then Printf.printf "    Part 1: table %d = %d bits\n" (if part1_table_1 then 1 else 0) part1_bits;
-					let check_range = (
-						if new_end_full then (
-							if debug then Printf.printf "    Full band; use normal lookups\n";
-							cache
-						) else (
-							(* Need to recreate the number of bits in the last band *)
-							let from_quant = scf_bands.(new_end_band) in
-							let last_band_bits = Array.init 32 (fun t -> if t = 4 || t = 14 then 100000 else 0) in
-							let num_15_or_more_ref = ref 0 in
-							let max_quant_ref = ref 0 in
-							let rec do_quant quant_now = if quant_now > last_quant then () else (
-								let x = abs quants.(quant_now) in
-								let y = abs quants.(quant_now + 1) in
-								let x15 = min x 15 in
-								let y15 = min y 15 in
-								
-								if x15 = 15 then incr num_15_or_more_ref;
-								if y15 = 15 then incr num_15_or_more_ref;
-								
-								max_quant_ref := max !max_quant_ref (max x y);
-								
-								(
-									let code = (x15 lsl 4) lor y15 in
-									for t = 0 to 15 do
-										if t <> 4 && t <> 14 then (
-											match global_ht_encode.(t).(code) with
-											| (0,1) -> last_band_bits.(t) <- 100000
-											| (b,_) -> last_band_bits.(t) <- last_band_bits.(t) + b
-										)
-									done;
-									(* Tables 16 and 24 *)
-									(
-										let (b,_) = global_ht_encode.(16).(code) in
-										last_band_bits.(16) <- last_band_bits.(16) + b
-									);
-									(
-										let (b,_) = global_ht_encode.(24).(code) in
-										last_band_bits.(24) <- last_band_bits.(24) + b
-									);
-								);
-								
-								do_quant (quant_now + 2)
-							) in
-							do_quant from_quant;
-							(
-								(* Update tables 16-23 and 24-31 *)
-								let b16 = last_band_bits.(16) in
-								let b24 = last_band_bits.(24) in
-								let n15 = !num_15_or_more_ref in
-								let mq = !max_quant_ref in
-								last_band_bits.(16) <- if mq >   16 then 100000 else b16 + n15 * 1;
-								last_band_bits.(17) <- if mq >   18 then 100000 else b16 + n15 * 2;
-								last_band_bits.(18) <- if mq >   22 then 100000 else b16 + n15 * 3;
-								last_band_bits.(19) <- if mq >   30 then 100000 else b16 + n15 * 4;
-								last_band_bits.(20) <- if mq >   78 then 100000 else b16 + n15 * 6;
-								last_band_bits.(21) <- if mq >  270 then 100000 else b16 + n15 * 8;
-								last_band_bits.(22) <- if mq > 1038 then 100000 else b16 + n15 * 10;
-								last_band_bits.(23) <- if mq > 8206 then 100000 else b16 + n15 * 13;
-								last_band_bits.(24) <- if mq >   30 then 100000 else b24 + n15 * 4;
-								last_band_bits.(25) <- if mq >   46 then 100000 else b24 + n15 * 5;
-								last_band_bits.(26) <- if mq >   78 then 100000 else b24 + n15 * 6;
-								last_band_bits.(27) <- if mq >  142 then 100000 else b24 + n15 * 7;
-								last_band_bits.(28) <- if mq >  270 then 100000 else b24 + n15 * 8;
-								last_band_bits.(29) <- if mq >  526 then 100000 else b24 + n15 * 9;
-								last_band_bits.(30) <- if mq > 2062 then 100000 else b24 + n15 * 11;
-								last_band_bits.(31) <- if mq > 8206 then 100000 else b24 + n15 * 13;
-								if mq > 15 then (
-									last_band_bits.(13) <- 100000;
-									last_band_bits.(15) <- 100000;
-								)
-							);
-							
-							if debug then (
-								Printf.printf "    Not full band. Bits in last band:\n";
-								Printf.printf "    ";
-								Array.iter (fun table ->
-									if table >= 100000 then (
-										Printf.printf "    -"
-									) else (
-										Printf.printf " %4d" table
-									)
-								) last_band_bits;
-								Printf.printf "\n";
-							);
-							
-							fun b_from b_to -> (
-								if b_to < new_end_band then (
-									(* Might as well add it to the cache *)
-									cache b_from b_to
-								) else (
-									let rec check_table smallest_bits smallest_table t = (
-										if t > 31 then (
-											(smallest_bits, smallest_table)
-										) else (
-											let rec check_band so_far band_now = (
-												if band_now > b_to then (
-													so_far
-												) else (
-													let new_bits = (if band_now >= new_end_band then last_band_bits.(t) else bits_per_band_table.(band_now).(t)) in
-													check_band (so_far + new_bits) (succ band_now)
-												)
-											) in
-											let current_table_bits = check_band 0 b_from in
-											if current_table_bits = 0 then (
-												(* Can't gen much smaller than 0 *)
-												(t, 0)
-											) else if current_table_bits < smallest_bits then (
-												check_table current_table_bits t (succ t)
-											) else (
-												check_table smallest_bits smallest_table (succ t)
-											)
-										)
-									) in
-									check_table max_int ~-1 0
-								)
-							)
-						)
-					) in
-
-(*(try*)
-					if new_end_band = 0 then (
-						if debug then Printf.printf "    Big values end in band 0; just check the first partition\n";
-						let (smallest_bits, smallest_table) = check_range 0 0 in
-						(smallest_bits + part1_bits, (0, 0, (last_quant + 1) lsr 1, smallest_table, 0, 0, part1_table_1))
-					) else if new_end_band = 1 then (
-						if debug then Printf.printf "    Big values end in band 1; check the first two partitions\n";
-						let (b0,t0) = check_range 0 0 in
-						let (b1,t1) = check_range 1 1 in
-						(b0 + b1 + part1_bits, (0, 0, (last_quant + 1) lsr 1, t0, t1, 0, part1_table_1))
-					) else (
-						if debug then Printf.printf "    Big values end after band 1; iterate normally\n";
-
-						let min_bits_ref = ref max_int in
-						let min_reg1_start_ref = ref 0 in
-						let min_reg2_start_ref = ref 0 in
-						let min_reg0_table_ref = ref 0 in
-						let min_reg1_table_ref = ref 0 in
-						let min_reg2_table_ref = ref 0 in
-						for reg1_start = 1 to min 16 (new_end_band - 1) do
-(*							let (b0a, t0a) = table_for_first_range_full_band.(reg1_start - 1) in*)
-let (b0, t0) = check_range 0 (reg1_start - 1) in
-							if debug then Printf.printf "     %02d=%d\n" t0 b0;
-							for reg2_start = (reg1_start + 1) to min (reg1_start + 8) new_end_band do
-								let (b1,t1) = check_range reg1_start (pred reg2_start) in
-								let (b2,t2) = check_range reg2_start new_end_band in
-								if debug then Printf.printf "      %02d,%02d - %02d,%02d = %d\n" reg1_start reg2_start t1 t2 (b0 + b1 + b2);
-								if b0 + b1 + b2 < !min_bits_ref then (
-									if debug then Printf.printf "       USE!\n";
-									min_bits_ref := b0 + b1 + b2;
-									min_reg1_start_ref := reg1_start;
-									min_reg2_start_ref := reg2_start;
-									min_reg0_table_ref := t0;
-									min_reg1_table_ref := t1;
-									min_reg2_table_ref := t2;
-								)
-							done;
-						done;
-
-						(!min_bits_ref + part1_bits, (!min_reg1_start_ref - 1, !min_reg2_start_ref - !min_reg1_start_ref - 1, (last_quant + 1) lsr 1, !min_reg0_table_ref, !min_reg1_table_ref, !min_reg2_table_ref, part1_table_1))
-					)
-(*
-with
-	x -> (Printf.printf "ERROR: %s\n" (Printexc.to_string x); raise x)
-)
-*)
-				) in
-
-				if bits < so_far_bits then (
-					(bits, config)
-				) else (
-					(so_far_bits, so_far_config)
-				)
-			) (max_int, (0,0,0,0,0,0,false)) !do_ends_ref in (* Smallest_bits, (length1, length2, big_values, table1, table2, table3, part1_table_1) *)
-
-			let (s_bits,(s_l1,s_l2,s_big,s_t1,s_t2,s_t3,p1t1)) = smallest_config in
-			if debug then Printf.printf "  (%d,(%d,%d,%d,%d,%d,%d,%B)\n" s_bits s_l1 s_l2 s_big s_t1 s_t2 s_t3 p1t1;
-
-			if debug then (
-				Printf.printf "  Last cache:\n";
-				Array.iter (fun b1 ->
-					Printf.printf "  ";
-					Array.iter (fun b2 ->
-						match b2 with
-						| None -> Printf.printf " (--,----)"
-						| Some (a,b) -> Printf.printf " (%02d,%4d)" b a
-					) b1;
-					Printf.printf "\n";
-				) range_cache;
-			);
-
-			if true then (
-				{
-					gc_part2_3_length = gc.gc_part2_3_length;
-					gc_part2_3_offset = gc.gc_part2_3_offset;
-					gc_big_values = s_big;
-					gc_global_gain = gc.gc_global_gain;
-					gc_scf_compress_index = gc.gc_scf_compress_index;
-					gc_window = Window_normal {normal_table_select1 = s_t1; normal_table_select2 = s_t2; normal_table_select3 = s_t3; normal_region_0_count = s_l1; normal_region_1_count = s_l2};
-					gc_pre_flag = gc.gc_pre_flag;
-					gc_sf_scale = gc.gc_sf_scale;
-					gc_count1_table_1 = p1t1;
-				}
-			) else (
-				{
-					gc_part2_3_length = gc.gc_part2_3_length; (* This isn't used for anything during the re-encoding process, so it's OK to not calculate it here *)
-					gc_part2_3_offset = gc.gc_part2_3_offset; (* This isn't actually used for anything... *)
-					gc_big_values = gc.gc_big_values; (* This is NOT recalculated during encoding *)
-					gc_global_gain = gc.gc_global_gain;
-					gc_scf_compress_index = gc.gc_scf_compress_index;
-					gc_window = Window_normal w;
-					gc_pre_flag = gc.gc_pre_flag;
-					gc_sf_scale = gc.gc_sf_scale;
-					gc_count1_table_1 = gc.gc_count1_table_1;
-				}
-			)
-		)
-	) in (* rehuff_granule quants gc scf_quants *)
-
-	match frame with
-	| M1_frame_data f -> (
-		if debug then Printf.printf "REHUFF_FRAME M1\n";
-		let new_granules = Array.mapi (fun gran_i quant_gran ->
-			let new_channels = Array.mapi (fun chan_i quants ->
-				if debug then Printf.printf " GC %d,%d\n" gran_i chan_i;
-				let gc = f.m1_side_info.side_gc.(gran_i).(chan_i) in
-				let scf_quants = global_scalefactors f.m1_header.header_samplerate false in
-				rehuff_granule quants gc scf_quants
-			) quant_gran in
-			new_channels
-		) f.m1_quantizers in
-		M1_frame_data {
-			m1_header = f.m1_header;
-			m1_side_info = {
-				side_main_data_begin = f.m1_side_info.side_main_data_begin;
-				side_scfi = f.m1_side_info.side_scfi;
-				side_gc = new_granules;
-			};
-			m1_scalefactors = f.m1_scalefactors;
-			m1_quantizers = f.m1_quantizers;
-			m1_starting_f1 = f.m1_starting_f1;
-		}
-	)
-	| M2_frame_data f -> (
-		if debug then Printf.printf "REHUFF_FRAME M2\n";
-
-		let new_granules = Array.mapi (fun chan_i quants ->
-			if debug then Printf.printf " GC %d\n" chan_i;
-			let gc = f.m2_side_info.side_gc.(0).(chan_i) in
-			let scf_quants = global_scalefactors f.m2_header.header_samplerate false in
-			rehuff_granule quants gc scf_quants
-		) f.m2_quantizers in
-		M2_frame_data {
-			m2_header = f.m2_header;
-			m2_side_info = {
-				side_main_data_begin = f.m2_side_info.side_main_data_begin;
-				side_scfi = f.m2_side_info.side_scfi;
-				side_gc = [| new_granules |];
-			};
-			m2_data_deleteme = f.m2_data_deleteme;
-			m2_scalefactors = f.m2_scalefactors;
-			m2_quantizers = f.m2_quantizers;
-			m2_starting_f1 = f.m2_starting_f1;
-		}
-	)
-
-);;
-
-let rehuff_frame_old ?(debug=false) frame = (
-
-	let rehuff_granule quants gc scf_quants = (
-		let rec find_last_big now = (match (now, quants.(now) = 0 || quants.(now) = -1 || quants.(now) = 1) with
-			| (0,true ) -> -1 (* Nothing! Yays! *)
-			| (_,true ) -> find_last_big (pred now)
-			| (_,false) -> now
-		) in
-		let last_big = (find_last_big (Array.length quants - 1)) lor 1 in
-		let rec find_last_nonzero now = (match (now, quants.(now)) with
-			| (0,0) -> -1
-			| (_,0) -> find_last_nonzero (pred now)
-			|   _   -> now
-		) in
-		let last_nonzero = find_last_nonzero (Array.length quants - 1) in
-		let last_big2 = min (min (last_big + 2) (Array.length quants - 1)) last_nonzero in
-
-		if debug then Printf.printf "  Last big:  %d\n" last_big;
-		if debug then Printf.printf "  Last big2: %d\n" last_big2;
-		if debug then Printf.printf "  Last not0: %d\n" last_nonzero;
-
-		(* But wait! If the last 2 quantizers are nonzero, they need to be encoded, and that means that the number of big_values must be a multiple of 4. *)
-		(* If big_values was not a multple of 4, then the encoding of count1 would go off the end of the array, and encoders may not handle it well. *)
-		let (last_big, last_big2) = if last_nonzero >= num_quants - 2 then (
-			let a = last_big lor 3 in (* "lor 3" pushes the number up to the next highest number which is 3 mod 4... *)
-			if debug then Printf.printf "   BUT the last 2 numbers are nonzero, so last_big = last_big2 = %d\n" a;
-			(a,a)
-		) else (
-			(last_big, last_big2)
-		) in
-
-		let (new_window, (big_values, count1_table_1)) = (match gc.gc_window with
-			| Window_normal w -> ( (* Full freedom of scalefactor band selection *)
-				(* From 1 to 16 in the first band thingie *)
-				(* From 1 to 8 in the second *)
-				if debug then Printf.printf "   Normal window\n";
-				let encode_this_max = Array.map abs quants in (* What to encode, minus the signs *)
-				let encode_this = Array.map (fun x -> if abs x >= 15 then 15 else abs x) quants in (* What to encode, minus the linbits and signs *)
-				let rec find_largest encode_this so_far on stop = (
-					(* Finds the largest in a range of an array *)
-					if on >= stop
-						then (max so_far encode_this.(on))
-						else find_largest encode_this (max so_far encode_this.(on)) (succ on) stop
-				) in
-				let max_per_scf = Array.init 22 (fun i ->
-					find_largest encode_this_max 0 scf_quants.(i) (scf_quants.(i + 1) - 1)
-				) in
-				if debug then (
-					Printf.printf "    Largest in scf:[";
-					Array.iter (fun x -> Printf.printf " %d" x) max_per_scf;
-					Printf.printf " ]\n";
-				);
-
-				let find_smallest_encoding scf_from scf_to quant_max = (
-					(* Given a range of scalefactors, this will find the Huffman table which results in the smallest number of bitses *)
-					if scf_from < 0 || scf_to < 0 || scf_from > scf_to then (0,0) else (
-						let quant_from = scf_quants.(scf_from) in
-						let quant_to = scf_quants.(scf_to + 1) - 1 in
-
-						(* Find out which Huffman tables to look at *)
-						let max_in_range = find_largest max_per_scf 0 scf_from scf_to in
-						let (_,tables_to_check) = List.find (fun (a,_) -> a >= max_in_range) huffman_tables_from_lengths in
-						if false then (
-							Printf.printf "     Largest is %d\n" max_in_range;
-							Printf.printf "     Going from %d to %d (quants %d to %d (or %d))\n" scf_from scf_to quant_from quant_to quant_max;
-							Printf.printf "     Tables to check: [";
-							Array.iter (fun x -> Printf.printf " %d" x) tables_to_check;
-							Printf.printf " ]\n";
-						);
-						(* A function for adding up the total number of bits with a given table, then comparing it to the smallest number of bits so far *)
-						let (smallest_table,smallest_bits) = Array.fold_left (fun (smallest_table,smallest_bits) new_table_index ->
-							if debug then Printf.printf "      Checking table %d: " new_table_index;
-							let ht_encode = global_ht_encode.(new_table_index) in
-							let ht_linbits = global_ht_linbits.(new_table_index) in
-							let rec accumulate so_far new_index go_to = (
-								if new_index > go_to then (
-(*									if debug then Printf.printf "done!\n";*)
-									so_far
-								) else (
-									let x = encode_this.(new_index) in
-									let y = encode_this.(new_index + 1) in
-(*									if debug then Printf.printf " (%d,%d)" x y;*)
-(*									let (bits,_) = Hashtbl.find ht_encode (x,y) in*)
-									let (bits,_) = ht_encode.((x lsl 4) lor (y land 15)) in
-(*									if debug then Printf.printf "o";*)
-									let linbits = (if x = 15 then ht_linbits else 0) + (if y = 15 then ht_linbits else 0) in
-									accumulate (so_far + bits + linbits) (new_index + 2) go_to
-								)
-							) in
-							let bits = accumulate 0 quant_from (min quant_to quant_max) in
-(*							if debug then Printf.printf "+\n";*)
-							if debug then Printf.printf " found %d; best was %d @ %d\n" bits smallest_table smallest_bits;
-							if bits < smallest_bits then (
-								(new_table_index,bits)
-							) else (
-								(smallest_table,smallest_bits)
-							)
-						) (-1,max_int) tables_to_check in
-
-(*						if debug then Printf.printf "     Smallest table is %d @ %d\n" smallest_table smallest_bits;*)
-						(smallest_table,smallest_bits)
-					)
-				) in
-				(* Same as the function above, but only checks to see which count1 table is best *)
-				let table_a = global_ht_encode_count1.(0) in
-				let find_smallest_count1_encoding quant_from quant_to = (
-					let bits_b = ((quant_to - quant_from + 4) lsr 2) lsl 2 in
-					let rec accumulate so_far new_index go_to = (
-						if new_index > go_to then (
-							so_far
-						) else if new_index + 2 = Array.length encode_this then (
-							(* Just do the first 2 *)
-							let (bits,_) = table_a.(encode_this.(new_index) lsl 3 lor encode_this.(new_index + 1) lsl 2) in
-							so_far + bits
-						) else (
-							let (bits,_) = table_a.(encode_this.(new_index) lsl 3 lor encode_this.(new_index + 1) lsl 2 lor encode_this.(new_index + 2) lsl 1 lor encode_this.(new_index + 3)) in
-							accumulate (so_far + bits) (new_index + 4) go_to
-						)
-					) in
-					let bits_a = accumulate 0 quant_from quant_to in
-					if bits_b <= bits_a then (
-						(* Use table B *)
-						(1, bits_b)
-					) else (
-						(* Use table A *)
-						(0, bits_a)
-					)
-				) in
-
-				(* Find the scalefactor band with the last big value in it *)
-				let rec find_last_big_scf_band check_now = (
-					if scf_quants.(check_now + 1) > last_big then check_now else find_last_big_scf_band (succ check_now)
-				) in
-				let last_big_scf = find_last_big_scf_band 0 in
-				let rec find_last_big_scf_band2 check_now = (
-					if scf_quants.(check_now + 1) > last_big2 then check_now else find_last_big_scf_band2 (succ check_now)
-				) in
-				let last_big_scf2 = find_last_big_scf_band2 0 in
-				if debug then Printf.printf "    Last SCF band to check is %d (or %d)\n" last_big_scf last_big_scf2;
-
-				(* Let's do this better(ly) *)
-				(* Region 0 can be from 1 to 16 scf bands long *)
-				(* Make an array where array.(n) represents the number of bits taken up by the smallest encoding of scalefactor bands 0 to n *)
-				let first_region_bits_by_end_scf = Array.init (max 1 (min 16 (last_big_scf - 1))) (fun i ->
-					let (table,bits) = find_smallest_encoding 0 i last_big in
-					if debug then Printf.printf "    1: %d bits in bands 0 to %d with table %d\n" bits i table;
-					(table,bits)
-				) in
-				if debug then Printf.printf "\n";
-				(* This next variable is if the last big value is in the first scf band, and therefore in the first region *)
-				(* It is also different if the last big value is right at the end of an scf band, and therefore needs one more table to worry about *)
-				(* This second case could be integrated into the previous table for speed, but it's not common enough to worry about *)
-				let first_region_bits_by_end_scf2 = if last_big_scf2 = 0 || last_big_scf <> last_big_scf2 then (
-					Array.init (max 1 (min 16 (last_big_scf2 - 1))) (fun i ->
-						let (table,bits) = find_smallest_encoding 0 i last_big2 in
-						if debug then Printf.printf "    1: %d bits in bands 0 to %d with table %d (BIG2)\n" bits i table;
-						(table,bits)
-					)
-				) else (
-					if debug then Printf.printf "    1: last_big has no effect on the first region (BIG2)\n";
-					first_region_bits_by_end_scf
-				) in
-				if debug then Printf.printf "\n";
-				let third_region_bits_by_start_scf = Array.init (max 0 (last_big_scf - 1)) (fun i ->
-					let (table,bits) = find_smallest_encoding (last_big_scf - i) last_big_scf last_big in
-					if debug then Printf.printf "    3: %d bits in bands %d to %d with table %d\n" bits (last_big_scf - i) last_big_scf table;
-					(table,bits)
-				) in
-				if debug then Printf.printf "\n";
-
-				let third_region_bits_by_start_scf2 = if last_big = last_big2 then (
-					(* last_big and last_big2 are equal! This may happen if there are no count1 values or if there are no count0 values *)
-					if debug then Printf.printf "    3: last_big = last_big2, so using the normal table for BIG2\n";
-					third_region_bits_by_start_scf
-				) else (
-					Array.init (max 0 (last_big_scf2 - 1)) (fun i ->
-						let (table,bits) = if i = 0 && last_big_scf <> last_big_scf2 && max_per_scf.(last_big_scf2) = 1 && encode_this.(last_big + 1) = 0 && encode_this.(last_big + 2) = 0 then (
-							(* This is a bizarre special case. If the last big value is at the end of a scalefactor band, the next two quants are 0, and there are nonzero quants in the next scf band, *)
-							(* then my max_per_scf will return 1 for the scf band after the last big value, even though only 0s need to be encoded *)
-							if debug then Printf.printf "    SPECIAL CASE: overriding the max_per_scf on scalefactor %d\n" last_big_scf2;
-							(0,0)
-						) else (
-							find_smallest_encoding (last_big_scf2 - i) last_big_scf2 last_big2
-						) in
-						if debug then Printf.printf "    3: %d bits in bands %d to %d with table %d (BIG2)\n" bits (last_big_scf2 - i) last_big_scf2 table;
-						(table,bits)
-					)
-				) in
-				if debug then Printf.printf "\n";
-
-				let (count1_table1, count1_bits1) = find_smallest_count1_encoding (last_big + 1) last_nonzero in
-				let (count1_table2, count1_bits2) = find_smallest_count1_encoding (last_big2 + 1) last_nonzero in
-				if debug then Printf.printf "    c1-1: %d bits with table %d (from %d to %d)\n" count1_bits1 count1_table1 (last_big + 1) last_nonzero;
-				if debug then Printf.printf "    c1-2: %d bits with table %d (from %d to %d)\n" count1_bits2 count1_table2 (last_big2 + 1) last_nonzero;
-
-				(* Do the test thang *)
-				let rec check_combination (smallest_bits, smallest_config) second_start third_start = (
-					if debug then Printf.printf "     Testing %d,%d\n" second_start third_start;
-
-					let (first_table2, first_bits2) = first_region_bits_by_end_scf2.(pred second_start) in
-					let (second_table1, second_bits1) = find_smallest_encoding second_start (pred third_start) last_big in
-					let (second_table2, second_bits2) = if last_big_scf < third_start then (
-						(* The last scf is, for some reason, in the second region *)
-						(* Therefore, the second region needs to be recalculated for the alternate last big value *)
-						(* I think this only happens when the last big value is in the second scalefactor *)
-						find_smallest_encoding second_start (pred third_start) last_big2
-					) else (
-						(* Normally, the two second regions are the same, since the last big value is in the third region *)
-						(second_table1, second_bits1)
-					) in
-					let (third_table2, third_bits2) = if last_big_scf2 - third_start < 0 then (0,0) else third_region_bits_by_start_scf2.(last_big_scf2 - third_start) in
-					let (bits2, config2) = (first_bits2 + second_bits2 + third_bits2 + count1_bits2, (second_start - 1, third_start - second_start - 1, first_table2, second_table2, third_table2, true)) in
-
-					(* The ordering of this section is getting pretty twisted... *)
-
-					let (bits1, config1) = if third_start > last_big_scf then (
-						(* The third section starts on an scf band which does not have any big_values in it, but it's being calculated because of the addition of two quants to the big values (if that makes sense) *)
-						(* Therefore, make sure the config is not chosen *)
-						(max_int, (0,0,0,0,0,false))
-					) else (
-						let (first_table1, first_bits1) = first_region_bits_by_end_scf.(pred second_start) in
-						let (third_table1, third_bits1) = third_region_bits_by_start_scf.(last_big_scf - third_start) in (* proBLAM! *)
-
-						if debug then Printf.printf "      1: (%d,%d), (%d,%d), (%d,%d)\n" first_bits1 first_table1 second_bits1 second_table1 third_bits1 third_table1;
-						(first_bits1 + second_bits1 + third_bits1 + count1_bits1, (second_start - 1, third_start - second_start - 1, first_table1, second_table1, third_table1, false))
-					) in
-
-					if debug then Printf.printf "      2: (%d,%d), (%d,%d), (%d,%d)\n" first_bits2 first_table2 second_bits2 second_table2 third_bits2 third_table2;
-
-					if debug then Printf.printf "       (%d,%d) bits\n" bits1 bits2;
-
-					let (smallest_bits, smallest_config) = if bits1 < bits2 && bits1 < smallest_bits then (
-						(bits1, config1)
-					) else if bits2 < smallest_bits then (
-						(bits2, config2)
-					) else (
-						(smallest_bits, smallest_config)
-					) in
-
-					if third_start >= last_big_scf2 || third_start - second_start >= 8 then (
-						(* Third range is only 1 scf band wide, or second scalefactor is the max width *)
-						if second_start >= last_big_scf2 - 1 || second_start >= 16 then (
-							(* Second range is pretty small too; looks like that's the end! *)
-							(smallest_bits, smallest_config)
-						) else (
-							(* Increment the second band *)
-							check_combination (smallest_bits, smallest_config) (second_start + 1) (second_start + 2)
-						)
-					) else (
-						(* Increment the third band *)
-						check_combination (smallest_bits, smallest_config) second_start (third_start + 1)
-					)
-				) in
-
-				let (smallest_bits, (len1, len2, table1, table2, table3, two_more)) = check_combination (max_int, (0,0,0,0,0,false)) 1 2 in
-
-				if debug then Printf.printf "    Best configuration is %d bits at %d,%d with tables %d,%d,%d. Two more? %B\n" smallest_bits len1 len2 table1 table2 table3 two_more;
-				(
-					Window_normal {
-						normal_table_select1 = table1;
-						normal_table_select2 = table2;
-						normal_table_select3 = table3;
-						normal_region_0_count = len1;
-						normal_region_1_count = len2;
-					}
-				,
-					if two_more then ((last_big2 + 2) lsr 1, (count1_table2 = 1)) else ((last_big + 2) lsr 1, (count1_table1 = 1))
-				)
-(*				Window_normal w*)
-			)
-			| Window_other w -> ( (* Scalefactor bands predefined *)
-				if debug then Printf.printf "   Other window\n";
-				(Window_other w, (gc.gc_big_values, gc.gc_count1_table_1))
-			)
-		) in
-		{
-			gc_part2_3_length = gc.gc_part2_3_length; (* This isn't used for anything during the re-encoding process, so it's OK to not calculate it here *)
-			gc_part2_3_offset = gc.gc_part2_3_offset; (* This isn't actually used for anything... *)
-			gc_big_values = big_values; (* This is NOT recalculated during encoding *)
-			gc_global_gain = gc.gc_global_gain;
-			gc_scf_compress_index = gc.gc_scf_compress_index;
-			gc_window = new_window;
-			gc_pre_flag = gc.gc_pre_flag;
-			gc_sf_scale = gc.gc_sf_scale;
-			gc_count1_table_1 = count1_table_1;
-		}
-	) in
-
-	match frame with
-	| M1_frame_data f -> (
-		if debug then Printf.printf "REHUFF_FRAME M1\n";
-		let new_granules = Array.mapi (fun gran_i quant_gran ->
-			let new_channels = Array.mapi (fun chan_i quants ->
-				if debug then Printf.printf " GC %d,%d\n" gran_i chan_i;
-				let gc = f.m1_side_info.side_gc.(gran_i).(chan_i) in
-				let scf_quants = global_scalefactors f.m1_header.header_samplerate false in
-				rehuff_granule quants gc scf_quants
-			) quant_gran in
-			new_channels
-		) f.m1_quantizers in
-		M1_frame_data {
-			m1_header = f.m1_header;
-			m1_side_info = {
-				side_main_data_begin = f.m1_side_info.side_main_data_begin;
-				side_scfi = f.m1_side_info.side_scfi;
-				side_gc = new_granules;
-			};
-			m1_scalefactors = f.m1_scalefactors;
-			m1_quantizers = f.m1_quantizers;
-			m1_starting_f1 = f.m1_starting_f1;
-		}
-(*
-		M1_frame_data f
-*)
-	)
-	| M2_frame_data f -> (
-		if debug then Printf.printf "REHUFF_FRAME M2\n";
-
-		let new_granules = Array.mapi (fun chan_i quants ->
-			if debug then Printf.printf " GC %d\n" chan_i;
-			let gc = f.m2_side_info.side_gc.(0).(chan_i) in
-			let scf_quants = global_scalefactors f.m2_header.header_samplerate false in
-			rehuff_granule quants gc scf_quants
-		) f.m2_quantizers in
-		M2_frame_data {
-			m2_header = f.m2_header;
-			m2_side_info = {
-				side_main_data_begin = f.m2_side_info.side_main_data_begin;
-				side_scfi = f.m2_side_info.side_scfi;
-				side_gc = [| new_granules |];
-			};
-			m2_data_deleteme = f.m2_data_deleteme;
-			m2_scalefactors = f.m2_scalefactors;
-			m2_quantizers = f.m2_quantizers;
-			m2_starting_f1 = f.m2_starting_f1;
-		}
-(*
-		M2_frame_data f
-*)
-	)
-);;
 
 (*
 ## Side info:
@@ -2056,10 +1679,7 @@ let rehuff_frame_old ?(debug=false) frame = (
 (**********************************************************************************************)
 let encode_frame ?(debug=false) d =
 
-
-
-
-	let write_granule_m1 k r scfsi gc scf quants = (
+	let write_granule_m1 k s scfsi gc scf quants = (
 		(* Scalefactors *)
 		let (scf_bits1, scf_bits2) = scalefactor_compress_m1.(gc.gc_scf_compress_index) in
 		let (num1, num2) = (match gc.gc_window with
@@ -2068,29 +1688,28 @@ let encode_frame ?(debug=false) d =
 			| Window_other x when x.other_mixed_block -> (17,18)
 			| Window_other x -> (18,18)
 		) in
-		let rec write_scf r i = (
+		let rec write_scf i = (
 			let num_bits = if i < num1 then scf_bits1 else scf_bits2 in
 			if i >= Array.length scf then (
 				if debug && debug_more then Printf.printf "!";
-				r
 			) else if i < 6 then (
-				let r = if scfsi.(0) then r else (if debug && debug_more then Printf.printf "0"; write_bits r num_bits scf.(i)) in
-				write_scf r (succ i)
+				if scfsi.(0) then () else (if debug && debug_more then Printf.printf "0"; Ptr.put_seq s num_bits scf.(i));
+				write_scf (succ i)
 			) else if i < 11 then (
-				let r = if scfsi.(1) then r else (if debug && debug_more then Printf.printf "1"; write_bits r num_bits scf.(i)) in
-				write_scf r (succ i)
+				if scfsi.(1) then () else (if debug && debug_more then Printf.printf "1"; Ptr.put_seq s num_bits scf.(i));
+				write_scf (succ i)
 			) else if i < 16 then (
-				let r = if scfsi.(2) then r else (if debug && debug_more then Printf.printf "2"; write_bits r num_bits scf.(i)) in
-				write_scf r (succ i)
+				if scfsi.(2) then () else (if debug && debug_more then Printf.printf "2"; Ptr.put_seq s num_bits scf.(i));
+				write_scf (succ i)
 			) else if i < 21 then (
-				let r = if scfsi.(3) then r else (if debug && debug_more then Printf.printf "3"; write_bits r num_bits scf.(i)) in
-				write_scf r (succ i)
+				if scfsi.(3) then () else (if debug && debug_more then Printf.printf "3"; Ptr.put_seq s num_bits scf.(i));
+				write_scf (succ i)
 			) else (
-				let r = (if debug && debug_more then Printf.printf "+"; write_bits r num_bits scf.(i)) in
-				write_scf r (succ i)
+				if debug && debug_more then Printf.printf "+"; Ptr.put_seq s num_bits scf.(i);
+				write_scf (succ i)
 			)
 		) in
-		let r = write_scf r 0 in
+		write_scf 0;
 		if debug && debug_more then Printf.printf "\n";
 
 		(* Quantizers *)
@@ -2111,9 +1730,10 @@ let encode_frame ?(debug=false) d =
 				(min region0 gc.gc_big_values, max 0 (gc.gc_big_values - region0), 0, w.other_table_select1, w.other_table_select2, 0)
 			)
 		) in
-		let rec write_to_frame index left ht_encode linbits r = (
-			if left <= 0 then (index, r) else (
-				if debug && debug_more then Printf.printf "Trying to squeeze (%d,%d) from %d to position %d (%d)\n" quants.(index) quants.(index + 1) index (snd r) left;
+		if debug then Printf.printf "Writing (%d,%d,%d) pairs with tables (%d,%d,%d)\n" region0 region1 region2 table0 table1 table2;
+		let rec write_to_frame index left ht_encode linbits = (
+			if left <= 0 then index else (
+				if debug && debug_more then Printf.printf "Trying to squeeze (%d,%d) from %d to position %d (%d)\n" quants.(index) quants.(index + 1) index s.Ptr.seq_at left;
 
 				let (x, y) = (quants.(index), quants.(index + 1)) in
 
@@ -2127,22 +1747,22 @@ let encode_frame ?(debug=false) d =
 				let (bits, value) = ht_encode.((x_base lsl 4) lor (y_base land 15)) in
 				if debug && debug_more then Printf.printf " Found Huffman code %d of length %d (%d,%d,%d,%d)\n" value bits x_lin_bits x_sign_bits y_lin_bits y_sign_bits;
 
-				let r = write_bits r bits value in
-				let r = write_bits r x_lin_bits x_lin in
-				let r = write_bits r x_sign_bits x_sign in
-				let r = write_bits r y_lin_bits y_lin in
-				let r = write_bits r y_sign_bits y_sign in
+				Ptr.put_seq s bits value;
+				Ptr.put_seq s x_lin_bits x_lin;
+				Ptr.put_seq s x_sign_bits x_sign;
+				Ptr.put_seq s y_lin_bits y_lin;
+				Ptr.put_seq s y_sign_bits y_sign;
 
 				if debug then Printf.printf " Done writing!\n";
 
-				write_to_frame (index + 2) (left - 1) ht_encode linbits r
+				write_to_frame (index + 2) (left - 1) ht_encode linbits
 			)
 		) in
-		let (index, r) = write_to_frame   0   region0 global_ht_encode.(table0) global_ht_linbits.(table0) r in
+		let index = write_to_frame   0   region0 global_ht_encode.(table0) global_ht_linbits.(table0) in
 		if debug then Printf.printf "Done with first region\n";
-		let (index, r) = write_to_frame index region1 global_ht_encode.(table1) global_ht_linbits.(table1) r in
+		let index = write_to_frame index region1 global_ht_encode.(table1) global_ht_linbits.(table1) in
 		if debug then Printf.printf "Done with second region\n";
-		let (index, r) = write_to_frame index region2 global_ht_encode.(table2) global_ht_linbits.(table2) r in
+		let index = write_to_frame index region2 global_ht_encode.(table2) global_ht_linbits.(table2) in
 		if debug then Printf.printf "Done with third region\n";
 
 		let find_last_nonzero_index table = (
@@ -2158,36 +1778,42 @@ let encode_frame ?(debug=false) d =
 			find_last_nonzero_rec table (Array.length table - 1)
 		) in
 
-		let rec write_count1_to_frame index go_to ht_encode r = (
-			if index > go_to then (index, r) else (
-				if debug && debug_more then Printf.printf "Trying to squeeze (%d,%d,%d,%d) from %d to position %d of %d going to %d\n" quants.(index) quants.(index + 1) quants.(index + 2) quants.(index + 3) index (snd r) (String.length (fst r) * 8) go_to;
+		let rec write_count1_to_frame index go_to ht_encode = (
+			if index > go_to then index else (
+				if debug && debug_more then Printf.printf "Trying to squeeze (%d,%d,%d,%d) from %d to position %d of %d going to %d\n" quants.(index) quants.(index + 1) quants.(index + 2) quants.(index + 3) index s.Ptr.seq_at (Ptr.length s.Ptr.seq_ptr * 8) go_to;
 
 				let (v,w,x,y) = (*if index = (Array.length quants - 2) then (quants.(index), quants.(index + 1), 0, 0) else*) (quants.(index), quants.(index + 1), quants.(index + 2), quants.(index + 3)) in
+(*
 				let (v_sign, v_sign_bits) = if v = 0 then (0,0) else if v > 0 then (0,1) else (1,1) in
 				let (w_sign, w_sign_bits) = if w = 0 then (0,0) else if w > 0 then (0,1) else (1,1) in
 				let (x_sign, x_sign_bits) = if x = 0 then (0,0) else if x > 0 then (0,1) else (1,1) in
 				let (y_sign, y_sign_bits) = if y = 0 then (0,0) else if y > 0 then (0,1) else (1,1) in
+*)
+				let v_sign = (1 - v) lsr 1 in
+				let w_sign = (1 - w) lsr 1 in
+				let x_sign = (1 - x) lsr 1 in
+				let y_sign = (1 - y) lsr 1 in
 
 (*				let (bits, value) = Hashtbl.find ht_encode (abs v, abs w, abs x, abs y) in*)
 				let (bits, value) = ht_encode.((abs v) lsl 3 lor (abs w) lsl 2 lor (abs x) lsl 1 lor (abs y)) in
 				if debug && debug_more then Printf.printf " Found Huffman code %d of length %d\n" value bits;
 
-				let r = write_bits r bits value in
-				let r = write_bits r v_sign_bits v_sign in
-				let r = write_bits r w_sign_bits w_sign in
-				let r = write_bits r x_sign_bits x_sign in
-				let r = write_bits r y_sign_bits y_sign in
-				write_count1_to_frame (index + 4) go_to ht_encode r
+				Ptr.put_seq s bits value;
+				if v <> 0 then Ptr.put_seq s 1 v_sign;
+				if w <> 0 then Ptr.put_seq s 1 w_sign;
+				if x <> 0 then Ptr.put_seq s 1 x_sign;
+				if y <> 0 then Ptr.put_seq s 1 y_sign;
+
+				write_count1_to_frame (index + 4) go_to ht_encode
 			)
 		) in
 		let go_to = find_last_nonzero_index quants in
 		if debug then Printf.printf "Last nonzero quantizer is %d\n" go_to;
-		let (index, r) = write_count1_to_frame index go_to global_ht_encode_count1.(if gc.gc_count1_table_1 then 1 else 0) r in
+		let index = write_count1_to_frame index go_to global_ht_encode_count1.(if gc.gc_count1_table_1 then 1 else 0) in
 		if debug then Printf.printf "Wrote count1 to frame\n";
-		r
 	) in
 
-	let write_granule_m2 k r is gc scf quants = (
+	let write_granule_m2 k s is gc scf quants = (
 		(* Just copy the original layout; I doubt there's much savings to be had here *)
 		let (bits0, bits1, bits2, bits3) = if is then (
 			scalefactor_compress_m2_is.(gc.gc_scf_compress_index)
@@ -2202,27 +1828,26 @@ let encode_frame ?(debug=false) d =
 		let sob3 = sob2 + num2 in
 		let num_total = sob3 + num3 in
 		
-		let rec write_scf r i = (
+		let rec write_scf i = (
 			if i < sob1 then (
-				let r = (if debug && debug_more then Printf.printf "0"; write_bits r bits0 scf.(i)) in
-				write_scf r (succ i)
+				if debug && debug_more then Printf.printf "0"; Ptr.put_seq s bits0 scf.(i);
+				write_scf (succ i)
 			) else if i < sob2 then (
-				let r = (if debug && debug_more then Printf.printf "1"; write_bits r bits1 scf.(i)) in
-				write_scf r (succ i)
+				if debug && debug_more then Printf.printf "1"; Ptr.put_seq s bits1 scf.(i);
+				write_scf (succ i)
 			) else if i < sob3 then (
-				let r = (if debug && debug_more then Printf.printf "2"; write_bits r bits2 scf.(i)) in
-				write_scf r (succ i)
+				if debug && debug_more then Printf.printf "2"; Ptr.put_seq s bits2 scf.(i);
+				write_scf (succ i)
 			) else if i < num_total then (
-				let r = (if debug && debug_more then Printf.printf "3"; write_bits r bits3 scf.(i)) in
-				write_scf r (succ i)
+				if debug && debug_more then Printf.printf "3"; Ptr.put_seq s bits3 scf.(i);
+				write_scf (succ i)
 			) else (
 				if debug && debug_more then Printf.printf "!";
-				r
 			)
 		) in
-		let r = write_scf r 0 in
+		write_scf 0;
 		if debug && debug_more then Printf.printf "\n";
-		
+
 		(* Quants *)
 		let (region0, region1, region2, table0, table1, table2) = (match gc.gc_window with
 			| Window_normal w -> (
@@ -2242,9 +1867,9 @@ let encode_frame ?(debug=false) d =
 			)
 		) in
 
-		let rec write_to_frame index left ht_encode linbits r = (
-			if left <= 0 then (index, r) else (
-				if debug && debug_more then Printf.printf "Trying to squeeze (%d,%d) from %d to position %d (%d)\n" quants.(index) quants.(index + 1) index (snd r) left;
+		let rec write_to_frame index left ht_encode linbits = (
+			if left <= 0 then index else (
+				if debug && debug_more then Printf.printf "Trying to squeeze (%d,%d) from %d to position %d (%d)\n" quants.(index) quants.(index + 1) index s.Ptr.seq_at left;
 
 				let (x, y) = (quants.(index), quants.(index + 1)) in
 
@@ -2258,22 +1883,22 @@ let encode_frame ?(debug=false) d =
 				let (bits, value) = ht_encode.((x_base lsl 4) lor (y_base land 15)) in
 				if debug && debug_more then Printf.printf " Found Huffman code %d of length %d (%d,%d,%d,%d)\n" value bits x_lin_bits x_sign_bits y_lin_bits y_sign_bits;
 
-				let r = write_bits r bits value in
-				let r = write_bits r x_lin_bits x_lin in
-				let r = write_bits r x_sign_bits x_sign in
-				let r = write_bits r y_lin_bits y_lin in
-				let r = write_bits r y_sign_bits y_sign in
+				Ptr.put_seq s bits value;
+				Ptr.put_seq s x_lin_bits x_lin;
+				Ptr.put_seq s x_sign_bits x_sign;
+				Ptr.put_seq s y_lin_bits y_lin;
+				Ptr.put_seq s y_sign_bits y_sign;
 
 				if debug then Printf.printf " Done writing!\n";
 
-				write_to_frame (index + 2) (left - 1) ht_encode linbits r
+				write_to_frame (index + 2) (left - 1) ht_encode linbits
 			)
 		) in
-		let (index, r) = write_to_frame   0   region0 global_ht_encode.(table0) global_ht_linbits.(table0) r in
+		let index = write_to_frame   0   region0 global_ht_encode.(table0) global_ht_linbits.(table0) in
 		if debug then Printf.printf "Done with first region\n";
-		let (index, r) = write_to_frame index region1 global_ht_encode.(table1) global_ht_linbits.(table1) r in
+		let index = write_to_frame index region1 global_ht_encode.(table1) global_ht_linbits.(table1) in
 		if debug then Printf.printf "Done with second region\n";
-		let (index, r) = write_to_frame index region2 global_ht_encode.(table2) global_ht_linbits.(table2) r in
+		let index = write_to_frame index region2 global_ht_encode.(table2) global_ht_linbits.(table2) in
 		if debug then Printf.printf "Done with third region\n";
 
 		let find_last_nonzero_index table = (
@@ -2289,9 +1914,9 @@ let encode_frame ?(debug=false) d =
 			find_last_nonzero_rec table (Array.length table - 1)
 		) in
 
-		let rec write_count1_to_frame index go_to ht_encode r = (
-			if index > go_to then (index, r) else (
-				if debug && debug_more then Printf.printf "Trying to squeeze (%d,%d,%d,%d) from %d to position %d of %d going to %d\n" quants.(index) quants.(index + 1) quants.(index + 2) quants.(index + 3) index (snd r) (String.length (fst r) * 8) go_to;
+		let rec write_count1_to_frame index go_to ht_encode = (
+			if index > go_to then index else (
+				if debug && debug_more then Printf.printf "Trying to squeeze (%d,%d,%d,%d) from %d to position %d of %d going to %d\n" quants.(index) quants.(index + 1) quants.(index + 2) quants.(index + 3) index s.Ptr.seq_at (Ptr.length s.Ptr.seq_ptr * 8) go_to;
 
 				let (v,w,x,y) = (*if index = (Array.length quants - 2) then (quants.(index), quants.(index + 1), 0, 0) else*) (quants.(index), quants.(index + 1), quants.(index + 2), quants.(index + 3)) in
 				let (v_sign, v_sign_bits) = if v = 0 then (0,0) else if v > 0 then (0,1) else (1,1) in
@@ -2299,24 +1924,22 @@ let encode_frame ?(debug=false) d =
 				let (x_sign, x_sign_bits) = if x = 0 then (0,0) else if x > 0 then (0,1) else (1,1) in
 				let (y_sign, y_sign_bits) = if y = 0 then (0,0) else if y > 0 then (0,1) else (1,1) in
 
-(*				let (bits, value) = Hashtbl.find ht_encode (abs v, abs w, abs x, abs y) in*)
 				let (bits, value) = ht_encode.((abs v) lsl 3 lor (abs w) lsl 2 lor (abs x) lsl 1 lor (abs y)) in
 				if debug && debug_more then Printf.printf " Found Huffman code %d of length %d\n" value bits;
 
-				let r = write_bits r bits value in
-				let r = write_bits r v_sign_bits v_sign in
-				let r = write_bits r w_sign_bits w_sign in
-				let r = write_bits r x_sign_bits x_sign in
-				let r = write_bits r y_sign_bits y_sign in
-				write_count1_to_frame (index + 4) go_to ht_encode r
+				Ptr.put_seq s bits value;
+				Ptr.put_seq s v_sign_bits v_sign;
+				Ptr.put_seq s w_sign_bits w_sign;
+				Ptr.put_seq s x_sign_bits x_sign;
+				Ptr.put_seq s y_sign_bits y_sign;
+
+				write_count1_to_frame (index + 4) go_to ht_encode
 			)
 		) in
 		let go_to = find_last_nonzero_index quants in
 		if debug then Printf.printf "Last nonzero quantizer is %d\n" go_to;
-		let (index, r) = write_count1_to_frame index go_to global_ht_encode_count1.(if gc.gc_count1_table_1 then 1 else 0) r in
+		let index = write_count1_to_frame index go_to global_ht_encode_count1.(if gc.gc_count1_table_1 then 1 else 0) in
 		if debug then Printf.printf "Wrote count1 to frame\n";
-		r
-
 	) in
 
 
@@ -2326,80 +1949,80 @@ let encode_frame ?(debug=false) d =
 	| M1_frame_data m when m.m1_header.header_channel_mode = ChannelMono -> (
 		(* MONO MPEG1 *)
 		let k = m.m1_header in
-		
+
 		(*************)
 		(* Parts 2,3 *)
 		(*************)
-		let out_q = String.make 2881 '\x00' in
-		let r = (out_q, 0) in
-		
-		let r0 = snd r in
+		let out_ptr = Ptr.clearret (Ptr.make 2881 0) in
+		let s = Ptr.new_seq out_ptr in
+
+		let r0 = s.Ptr.seq_at in
 		if debug then Printf.printf "Doing first granule at %d (had better be 0)\n" r0;
-		let r = write_granule_m1 k r [| false;false;false;false |] m.m1_side_info.side_gc.(0).(0) m.m1_scalefactors.(0).(0) m.m1_quantizers.(0).(0) in
-		let r1 = snd r in
+		write_granule_m1 k s [| false;false;false;false |] m.m1_side_info.side_gc.(0).(0) m.m1_scalefactors.(0).(0) m.m1_quantizers.(0).(0);
+		let r1 = s.Ptr.seq_at in
 		if debug then Printf.printf "First granule done; starting second at %d\n" r1;
-		let r = write_granule_m1 k r m.m1_side_info.side_scfi.(0)  m.m1_side_info.side_gc.(1).(0) m.m1_scalefactors.(1).(0) m.m1_quantizers.(1).(0) in
-		let r2 = snd r in
+		write_granule_m1 k s m.m1_side_info.side_scfi.(0)  m.m1_side_info.side_gc.(1).(0) m.m1_scalefactors.(1).(0) m.m1_quantizers.(1).(0);
+		let r2 = s.Ptr.seq_at in
 		if debug then Printf.printf "Second granule done at %d\n" r2;
 
-		let data_raw = String.sub (fst r) 0 ((snd r + 7) lsr 3) in
-
-		let (side_raw, side_bits, side_bytes) = (
-			(* String.create is OK here since all bits of the side info are well-defined *)
-			let r = String.create 17 in
+		let (side_raw_ptr, side_bits, side_bytes) =
+			let p = Ptr.make 17 0 in
 			let s = m.m1_side_info in
-			packBits r  0 9 s.side_main_data_begin;
-			packBits r  9 5 0;
-			packBits r 14 1 (if s.side_scfi.(0).(0) then 1 else 0);
-			packBits r 15 1 (if s.side_scfi.(0).(1) then 1 else 0);
-			packBits r 16 1 (if s.side_scfi.(0).(2) then 1 else 0);
-			packBits r 17 1 (if s.side_scfi.(0).(3) then 1 else 0);
+			let pb = Ptr.put_bits p in
+			pb 0 9 s.side_main_data_begin;
+			pb 9 5 0;
+			pb 14 1 (if s.side_scfi.(0).(0) then 1 else 0);
+			pb 15 1 (if s.side_scfi.(0).(1) then 1 else 0);
+			pb 16 1 (if s.side_scfi.(0).(2) then 1 else 0);
+			pb 17 1 (if s.side_scfi.(0).(3) then 1 else 0);
 			let pack_gc gc bits o = (
-				packBits r (o +  0) 12 bits;
-				packBits r (o + 12)  9 gc.gc_big_values;
-				packBits r (o + 21)  8 gc.gc_global_gain;
-				packBits r (o + 29)  4 gc.gc_scf_compress_index;
+				pb (o +  0) 12 bits;
+				pb (o + 12)  9 gc.gc_big_values;
+				pb (o + 21)  8 gc.gc_global_gain;
+				pb (o + 29)  4 gc.gc_scf_compress_index;
 				(match gc.gc_window with
 					| Window_normal w -> (
-						packBits r (o + 33) 1 0;
-						packBits r (o + 34) 5 w.normal_table_select1;
-						packBits r (o + 39) 5 w.normal_table_select2;
-						packBits r (o + 44) 5 w.normal_table_select3;
-						packBits r (o + 49) 4 w.normal_region_0_count;
-						packBits r (o + 53) 3 w.normal_region_1_count;
+						pb (o + 33) 1 0;
+						pb (o + 34) 5 w.normal_table_select1;
+						pb (o + 39) 5 w.normal_table_select2;
+						pb (o + 44) 5 w.normal_table_select3;
+						pb (o + 49) 4 w.normal_region_0_count;
+						pb (o + 53) 3 w.normal_region_1_count;
 					)
 					| Window_other w -> (
-						packBits r (o + 33) 1 1;
-						packBits r (o + 34) 2 (match w.other_block_type with | Block_type_long -> 0 | Block_type_start -> 1 | Block_type_short -> 2 | Block_type_stop -> 3);
-						packBits r (o + 36) 1 (if w.other_mixed_block then 1 else 0);
-						packBits r (o + 37) 5 w.other_table_select1;
-						packBits r (o + 42) 5 w.other_table_select2;
-						packBits r (o + 47) 3 w.other_sub_block_gain1;
-						packBits r (o + 50) 3 w.other_sub_block_gain2;
-						packBits r (o + 53) 3 w.other_sub_block_gain3;
+						pb (o + 33) 1 1;
+						pb (o + 34) 2 (match w.other_block_type with | Block_type_long -> 0 | Block_type_start -> 1 | Block_type_short -> 2 | Block_type_stop -> 3);
+						pb (o + 36) 1 (if w.other_mixed_block then 1 else 0);
+						pb (o + 37) 5 w.other_table_select1;
+						pb (o + 42) 5 w.other_table_select2;
+						pb (o + 47) 3 w.other_sub_block_gain1;
+						pb (o + 50) 3 w.other_sub_block_gain2;
+						pb (o + 53) 3 w.other_sub_block_gain3;
 					)
 				);
-				packBits r (o + 56) 1 (if gc.gc_pre_flag then 1 else 0);
-				packBits r (o + 57) 1 gc.gc_sf_scale;
-				packBits r (o + 58) 1 (if gc.gc_count1_table_1 then 1 else 0);
+				pb (o + 56) 1 (if gc.gc_pre_flag then 1 else 0);
+				pb (o + 57) 1 gc.gc_sf_scale;
+				pb (o + 58) 1 (if gc.gc_count1_table_1 then 1 else 0);
 			) in
 			pack_gc s.side_gc.(0).(0) (r1 - r0) 18;
 			pack_gc s.side_gc.(1).(0) (r2 - r1) 77;
-			(r, [| r1 - r0; r2 - r1 |], (r2 - r0 + 7) asr 3)
-		) in
+			(p, [| r1 - r0; r2 - r1 |], (r2 - r0 + 7) asr 3)
+		in
 
 		if debug then Printf.printf "Done packing the side info\n";
+
+		let (data_ptr, data_bits) = Ptr.finalize_seq s in
 
 		{
 			f1_num = m.m1_starting_f1.f1_num;
 			f1_header = m.m1_starting_f1.f1_header;
 			f1_side = {
-				side_raw = side_raw;
+				side_raw = Ptr.Ref.of_ptr side_raw_ptr;
 				side_offset = 0; (* not used *)
 				side_bits = side_bits;
 				side_bytes = side_bytes;
 			};
-			f1_data = data_raw;
+			f1_data = Ptr.Ref.of_subptr data_ptr 0 ((data_bits + 7) lsr 3);
 			f1_pad_exact = None;
 		}
 	)
@@ -2410,101 +2033,91 @@ let encode_frame ?(debug=false) d =
 		(*************)
 		(* Parts 2,3 *)
 		(*************)
-		let out_q = String.make 2881 '\x00' in (* This is the size of a padded 640kbps frame @ 32KHz (this will cover freeformat nicely) *)
-		let r = (out_q, 0) in
+		let out_ptr = Ptr.clearret (Ptr.make 2881 0) in
+		let s = Ptr.new_seq out_ptr in
 
-		let r0 = snd r in (* had better be 0 *)
+		let r0 = s.Ptr.seq_at in (* had better be 0 *)
 		if debug then Printf.printf "Doing first granule at %d (had better be 0)\n" r0;
-		let r = write_granule_m1 k r [| false;false;false;false |] m.m1_side_info.side_gc.(0).(0) m.m1_scalefactors.(0).(0) m.m1_quantizers.(0).(0) in
-		let r1 = snd r in
+		write_granule_m1 k s [| false;false;false;false |] m.m1_side_info.side_gc.(0).(0) m.m1_scalefactors.(0).(0) m.m1_quantizers.(0).(0);
+		let r1 = s.Ptr.seq_at in
 		if debug then Printf.printf "First granule done; starting second at %d\n" r1;
-		let r = write_granule_m1 k r [| false;false;false;false |] m.m1_side_info.side_gc.(0).(1) m.m1_scalefactors.(0).(1) m.m1_quantizers.(0).(1) in
-		let r2 = snd r in
+		write_granule_m1 k s [| false;false;false;false |] m.m1_side_info.side_gc.(0).(1) m.m1_scalefactors.(0).(1) m.m1_quantizers.(0).(1);
+		let r2 = s.Ptr.seq_at in
 		if debug then Printf.printf "Second granule done; starting third at %d\n" r2;
-		let r = write_granule_m1 k r m.m1_side_info.side_scfi.(0)  m.m1_side_info.side_gc.(1).(0) m.m1_scalefactors.(1).(0) m.m1_quantizers.(1).(0) in
-		let r3 = snd r in
+		write_granule_m1 k s m.m1_side_info.side_scfi.(0)  m.m1_side_info.side_gc.(1).(0) m.m1_scalefactors.(1).(0) m.m1_quantizers.(1).(0);
+		let r3 = s.Ptr.seq_at in
 		if debug then Printf.printf "Third granule done; starting fourth at %d\n" r3;
-		let r = write_granule_m1 k r m.m1_side_info.side_scfi.(1)  m.m1_side_info.side_gc.(1).(1) m.m1_scalefactors.(1).(1) m.m1_quantizers.(1).(1) in
-		let r4 = snd r in
+		write_granule_m1 k s m.m1_side_info.side_scfi.(1)  m.m1_side_info.side_gc.(1).(1) m.m1_scalefactors.(1).(1) m.m1_quantizers.(1).(1);
+		let r4 = s.Ptr.seq_at in
 		if debug then Printf.printf "Fourth granule done at %d\n" r4;
-
-		let data_raw = String.sub (fst r) 0 ((snd r + 7) lsr 3) in
 
 		(************************)
 		(* Encode the side info *)
 		(************************)
-		let (side_raw, side_bits, side_bytes) = (
-			let r = String.create 32 in
+		let (side_raw_ptr, side_bits, side_bytes) = (
+			let p = Ptr.make 32 0 in
 			let s = m.m1_side_info in
-			packBits r  0 9 s.side_main_data_begin;
-			packBits r  9 3 0;
-			packBits r 12 1 (if s.side_scfi.(0).(0) then 1 else 0);
-			packBits r 13 1 (if s.side_scfi.(0).(1) then 1 else 0);
-			packBits r 14 1 (if s.side_scfi.(0).(2) then 1 else 0);
-			packBits r 15 1 (if s.side_scfi.(0).(3) then 1 else 0);
-			packBits r 16 1 (if s.side_scfi.(1).(0) then 1 else 0);
-			packBits r 17 1 (if s.side_scfi.(1).(1) then 1 else 0);
-			packBits r 18 1 (if s.side_scfi.(1).(2) then 1 else 0);
-			packBits r 19 1 (if s.side_scfi.(1).(3) then 1 else 0);
+			let pb = Ptr.put_bits p in
+			pb  0 9 s.side_main_data_begin;
+			pb  9 3 0;
+			pb 12 1 (if s.side_scfi.(0).(0) then 1 else 0);
+			pb 13 1 (if s.side_scfi.(0).(1) then 1 else 0);
+			pb 14 1 (if s.side_scfi.(0).(2) then 1 else 0);
+			pb 15 1 (if s.side_scfi.(0).(3) then 1 else 0);
+			pb 16 1 (if s.side_scfi.(1).(0) then 1 else 0);
+			pb 17 1 (if s.side_scfi.(1).(1) then 1 else 0);
+			pb 18 1 (if s.side_scfi.(1).(2) then 1 else 0);
+			pb 19 1 (if s.side_scfi.(1).(3) then 1 else 0);
 			let pack_gc gc bits o = (
-				packBits r (o +  0) 12 bits;
-				packBits r (o + 12)  9 gc.gc_big_values;
-				packBits r (o + 21)  8 gc.gc_global_gain;
-				packBits r (o + 29)  4 gc.gc_scf_compress_index;
+				pb (o +  0) 12 bits;
+				pb (o + 12)  9 gc.gc_big_values;
+				pb (o + 21)  8 gc.gc_global_gain;
+				pb (o + 29)  4 gc.gc_scf_compress_index;
 				(match gc.gc_window with
 					| Window_normal w -> (
-						packBits r (o + 33) 1 0;
-						packBits r (o + 34) 5 w.normal_table_select1;
-						packBits r (o + 39) 5 w.normal_table_select2;
-						packBits r (o + 44) 5 w.normal_table_select3;
-						packBits r (o + 49) 4 w.normal_region_0_count;
-						packBits r (o + 53) 3 w.normal_region_1_count;
+						pb (o + 33) 1 0;
+						pb (o + 34) 5 w.normal_table_select1;
+						pb (o + 39) 5 w.normal_table_select2;
+						pb (o + 44) 5 w.normal_table_select3;
+						pb (o + 49) 4 w.normal_region_0_count;
+						pb (o + 53) 3 w.normal_region_1_count;
 					)
 					| Window_other w -> (
-						packBits r (o + 33) 1 1;
-						packBits r (o + 34) 2 (match w.other_block_type with | Block_type_long -> 0 | Block_type_start -> 1 | Block_type_short -> 2 | Block_type_stop -> 3);
-						packBits r (o + 36) 1 (if w.other_mixed_block then 1 else 0);
-						packBits r (o + 37) 5 w.other_table_select1;
-						packBits r (o + 42) 5 w.other_table_select2;
-						packBits r (o + 47) 3 w.other_sub_block_gain1;
-						packBits r (o + 50) 3 w.other_sub_block_gain2;
-						packBits r (o + 53) 3 w.other_sub_block_gain3;
+						pb (o + 33) 1 1;
+						pb (o + 34) 2 (match w.other_block_type with | Block_type_long -> 0 | Block_type_start -> 1 | Block_type_short -> 2 | Block_type_stop -> 3);
+						pb (o + 36) 1 (if w.other_mixed_block then 1 else 0);
+						pb (o + 37) 5 w.other_table_select1;
+						pb (o + 42) 5 w.other_table_select2;
+						pb (o + 47) 3 w.other_sub_block_gain1;
+						pb (o + 50) 3 w.other_sub_block_gain2;
+						pb (o + 53) 3 w.other_sub_block_gain3;
 					)
 				);
-				packBits r (o + 56) 1 (if gc.gc_pre_flag then 1 else 0);
-				packBits r (o + 57) 1 gc.gc_sf_scale;
-				packBits r (o + 58) 1 (if gc.gc_count1_table_1 then 1 else 0);
+				pb (o + 56) 1 (if gc.gc_pre_flag then 1 else 0);
+				pb (o + 57) 1 gc.gc_sf_scale;
+				pb (o + 58) 1 (if gc.gc_count1_table_1 then 1 else 0);
 			) in
 			pack_gc s.side_gc.(0).(0) (r1 - r0)  20;
 			pack_gc s.side_gc.(0).(1) (r2 - r1)  79;
 			pack_gc s.side_gc.(1).(0) (r3 - r2) 138;
 			pack_gc s.side_gc.(1).(1) (r4 - r3) 197;
-			(r, [| r1 - r0; r2 - r1; r3 - r2; r4 - r3 |], (r4 - r0 + 7) asr 3)
+			(p, [| r1 - r0; r2 - r1; r3 - r2; r4 - r3 |], (r4 - r0 + 7) asr 3)
 		) in
 
 		if debug then Printf.printf "Done packing the side info\n";
 
-(*
-		{
-			transitFrame = m.m1_starting_transit.transitFrame;
-			transitHeader = m.m1_starting_transit.transitHeader;
-			transitSide = side_raw;
-			transitData = data_raw;
-			transitDataLength = String.length data_raw;
-			transitBits = r4;
-			transitPad = 0;
-		}
-*)
+		let (data_ptr, data_bits) = Ptr.finalize_seq s in
+
 		{
 			f1_num = m.m1_starting_f1.f1_num;
 			f1_header = m.m1_starting_f1.f1_header;
 			f1_side = {
-				side_raw = side_raw;
+				side_raw = Ptr.Ref.of_ptr side_raw_ptr;
 				side_offset = 0; (* not used *)
 				side_bits = side_bits;
 				side_bytes = side_bytes;
 			};
-			f1_data = data_raw;
+			f1_data = Ptr.Ref.of_subptr data_ptr 0 ((data_bits + 7) lsr 3);
 			f1_pad_exact = None;
 		}
 	)
@@ -2512,160 +2125,207 @@ let encode_frame ?(debug=false) d =
 		
 		let k = m.m2_header in
 
-		let out_q = String.make 5761 '\x00' in (* Length of a freeformat 640kbps frame @ 8khz (in case anybody wants to do that...) *)
-		let r = (out_q, 0) in
+		let out_ptr = Ptr.clearret (Ptr.make 5761 0) in
+		let s = Ptr.new_seq out_ptr in
 
-		let r0 = snd r in
+		let r0 = s.Ptr.seq_at in
 		if debug then Printf.printf "Doing first (and only) granule at %d (had better be 0)\n" r0;
-		let r = write_granule_m2 k r false m.m2_side_info.side_gc.(0).(0) m.m2_scalefactors.(0) m.m2_quantizers.(0) in
-		let r1 = snd r in
+		write_granule_m2 k s false m.m2_side_info.side_gc.(0).(0) m.m2_scalefactors.(0) m.m2_quantizers.(0);
+		let r1 = s.Ptr.seq_at in
 		if debug then Printf.printf "Granule done at %d\n" r1;
-		
-		let data_raw = String.sub (fst r) 0 ((snd r + 7) lsr 3) in
-		
-		let (side_raw, side_bits, side_bytes) = (
-			let r = String.create 9 in
+
+		let (side_raw_ptr, side_bits, side_bytes) = (
+			let p = Ptr.make 9 0 in
 			let s = m.m2_side_info in
-			packBits r  0 8 s.side_main_data_begin;
-			packBits r  8 2 0;
+			let pb = Ptr.put_bits p in
+			pb  0 8 s.side_main_data_begin;
+			pb  8 2 0;
 			let pack_gc gc bits o = (
-				packBits r (o +  0) 12 bits;
-				packBits r (o + 12)  9 gc.gc_big_values;
-				packBits r (o + 21)  8 gc.gc_global_gain;
-				packBits r (o + 29)  9 gc.gc_scf_compress_index;
+				pb (o +  0) 12 bits;
+				pb (o + 12)  9 gc.gc_big_values;
+				pb (o + 21)  8 gc.gc_global_gain;
+				pb (o + 29)  9 gc.gc_scf_compress_index;
 				(match gc.gc_window with
 					| Window_normal w -> (
-						packBits r (o + 38) 1 0;
-						packBits r (o + 39) 5 w.normal_table_select1;
-						packBits r (o + 44) 5 w.normal_table_select2;
-						packBits r (o + 49) 5 w.normal_table_select3;
-						packBits r (o + 54) 4 w.normal_region_0_count;
-						packBits r (o + 58) 3 w.normal_region_1_count;
+						pb (o + 38) 1 0;
+						pb (o + 39) 5 w.normal_table_select1;
+						pb (o + 44) 5 w.normal_table_select2;
+						pb (o + 49) 5 w.normal_table_select3;
+						pb (o + 54) 4 w.normal_region_0_count;
+						pb (o + 58) 3 w.normal_region_1_count;
 					)
 					| Window_other w -> (
-						packBits r (o + 38) 1 1;
-						packBits r (o + 39) 2 (match w.other_block_type with | Block_type_long -> 0 | Block_type_start -> 1 | Block_type_short -> 2 | Block_type_stop -> 3);
-						packBits r (o + 41) 1 (if w.other_mixed_block then 1 else 0);
-						packBits r (o + 42) 5 w.other_table_select1;
-						packBits r (o + 47) 5 w.other_table_select2;
-						packBits r (o + 52) 3 w.other_sub_block_gain1;
-						packBits r (o + 55) 3 w.other_sub_block_gain2;
-						packBits r (o + 58) 3 w.other_sub_block_gain3;
+						pb (o + 38) 1 1;
+						pb (o + 39) 2 (match w.other_block_type with | Block_type_long -> 0 | Block_type_start -> 1 | Block_type_short -> 2 | Block_type_stop -> 3);
+						pb (o + 41) 1 (if w.other_mixed_block then 1 else 0);
+						pb (o + 42) 5 w.other_table_select1;
+						pb (o + 47) 5 w.other_table_select2;
+						pb (o + 52) 3 w.other_sub_block_gain1;
+						pb (o + 55) 3 w.other_sub_block_gain2;
+						pb (o + 58) 3 w.other_sub_block_gain3;
 					)
 				);
-				packBits r (o + 61) 1 gc.gc_sf_scale;
-				packBits r (o + 62) 1 (if gc.gc_count1_table_1 then 1 else 0);
+				pb (o + 61) 1 gc.gc_sf_scale;
+				pb (o + 62) 1 (if gc.gc_count1_table_1 then 1 else 0);
 			) in
 			pack_gc s.side_gc.(0).(0) (r1 - r0) 9;
-			(r, [| r1 - r0 |], (r1 - r0 + 7) asr 3)
-			
+			(p, [| r1 - r0 |], (r1 - r0 + 7) asr 3)
 		) in
 		
 		if debug then Printf.printf "Done packing the side info\n";
-		
+
+		let (data_ptr, data_bits) = Ptr.finalize_seq s in
+
 		{
 			f1_num = m.m2_starting_f1.f1_num;
 			f1_header = m.m2_starting_f1.f1_header;
 			f1_side = {
-				side_raw = side_raw;
+				side_raw = Ptr.Ref.of_ptr side_raw_ptr;
 				side_offset = 0; (* not used *)
 				side_bits = side_bits;
 				side_bytes = side_bytes;
 			};
-			f1_data = data_raw;
+			f1_data = Ptr.Ref.of_subptr data_ptr 0 ((data_bits + 7) lsr 3);
 			f1_pad_exact = None;
 		}
 	)
 	| M2_frame_data m -> (
-(*		m.m2_starting_f1*)
 		let k = m.m2_header in
 
-		let out_q = String.make 5761 '\x00' in (* Length of a freeformat 640kbps frame @ 8khz (in case anybody wants to do that...) *)
-		let r = (out_q, 0) in
-		
-		let r0 = snd r in
+		let out_ptr = Ptr.clearret (Ptr.make 5761 0) in
+		let s = Ptr.new_seq out_ptr in
+
+		let r0 = s.Ptr.seq_at in
 		if debug then Printf.printf "Doing first granule at %d (had better be 0)\n" r0;
-		let r = write_granule_m2 k r         false         m.m2_side_info.side_gc.(0).(0) m.m2_scalefactors.(0) m.m2_quantizers.(0) in
-		let r1 = snd r in
+		write_granule_m2 k s         false         m.m2_side_info.side_gc.(0).(0) m.m2_scalefactors.(0) m.m2_quantizers.(0);
+		let r1 = s.Ptr.seq_at in
 		if debug then Printf.printf "First granule done; starting second at %d\n" r1;
-		let r = write_granule_m2 k r m.m2_header.header_is m.m2_side_info.side_gc.(0).(1) m.m2_scalefactors.(1) m.m2_quantizers.(1) in
-		let r2 = snd r in
+		write_granule_m2 k s m.m2_header.header_is m.m2_side_info.side_gc.(0).(1) m.m2_scalefactors.(1) m.m2_quantizers.(1);
+		let r2 = s.Ptr.seq_at in
 		if debug then Printf.printf "Second granule done at %d\n" r2;
-		
-		let data_raw = String.sub (fst r) 0 ((snd r + 7) lsr 3) in
-		
-		let (side_raw, side_bits, side_bytes) = (
-			let r = String.create 17 in
+
+		let (side_raw_ptr, side_bits, side_bytes) = (
+			let p = Ptr.make 17 0 in
 			let s = m.m2_side_info in
-			packBits r  0 8 s.side_main_data_begin;
-			packBits r  8 3 0;
+			let pb = Ptr.put_bits p in
+			pb  0 8 s.side_main_data_begin;
+			pb  8 3 0;
 			let pack_gc gc bits o = (
-				packBits r (o +  0) 12 bits;
-				packBits r (o + 12)  9 gc.gc_big_values;
-				packBits r (o + 21)  8 gc.gc_global_gain;
-				packBits r (o + 29)  9 gc.gc_scf_compress_index;
+				pb (o +  0) 12 bits;
+				pb (o + 12)  9 gc.gc_big_values;
+				pb (o + 21)  8 gc.gc_global_gain;
+				pb (o + 29)  9 gc.gc_scf_compress_index;
 				(match gc.gc_window with
 					| Window_normal w -> (
-						packBits r (o + 38) 1 0;
-						packBits r (o + 39) 5 w.normal_table_select1;
-						packBits r (o + 44) 5 w.normal_table_select2;
-						packBits r (o + 49) 5 w.normal_table_select3;
-						packBits r (o + 54) 4 w.normal_region_0_count;
-						packBits r (o + 58) 3 w.normal_region_1_count;
+						pb (o + 38) 1 0;
+						pb (o + 39) 5 w.normal_table_select1;
+						pb (o + 44) 5 w.normal_table_select2;
+						pb (o + 49) 5 w.normal_table_select3;
+						pb (o + 54) 4 w.normal_region_0_count;
+						pb (o + 58) 3 w.normal_region_1_count;
 					)
 					| Window_other w -> (
-						packBits r (o + 38) 1 1;
-						packBits r (o + 39) 2 (match w.other_block_type with | Block_type_long -> 0 | Block_type_start -> 1 | Block_type_short -> 2 | Block_type_stop -> 3);
-						packBits r (o + 41) 1 (if w.other_mixed_block then 1 else 0);
-						packBits r (o + 42) 5 w.other_table_select1;
-						packBits r (o + 47) 5 w.other_table_select2;
-						packBits r (o + 52) 3 w.other_sub_block_gain1;
-						packBits r (o + 55) 3 w.other_sub_block_gain2;
-						packBits r (o + 58) 3 w.other_sub_block_gain3;
+						pb (o + 38) 1 1;
+						pb (o + 39) 2 (match w.other_block_type with | Block_type_long -> 0 | Block_type_start -> 1 | Block_type_short -> 2 | Block_type_stop -> 3);
+						pb (o + 41) 1 (if w.other_mixed_block then 1 else 0);
+						pb (o + 42) 5 w.other_table_select1;
+						pb (o + 47) 5 w.other_table_select2;
+						pb (o + 52) 3 w.other_sub_block_gain1;
+						pb (o + 55) 3 w.other_sub_block_gain2;
+						pb (o + 58) 3 w.other_sub_block_gain3;
 					)
 				);
-				packBits r (o + 61) 1 gc.gc_sf_scale;
-				packBits r (o + 62) 1 (if gc.gc_count1_table_1 then 1 else 0);
+				pb (o + 61) 1 gc.gc_sf_scale;
+				pb (o + 62) 1 (if gc.gc_count1_table_1 then 1 else 0);
 			) in
 			pack_gc s.side_gc.(0).(0) (r1 - r0) 10;
 			pack_gc s.side_gc.(0).(1) (r2 - r1) 73;
-			(r, [| r1 - r0; r2 - r1 |], (r2 - r0 + 7) asr 3)
+			(p, [| r1 - r0; r2 - r1 |], (r2 - r0 + 7) asr 3)
 			
 		) in
 		
 		if debug then Printf.printf "Done packing the side info\n";
 
+		let (data_ptr, data_bits) = Ptr.finalize_seq s in
 
 		{
 			f1_num = m.m2_starting_f1.f1_num;
 			f1_header = m.m2_starting_f1.f1_header;
 			f1_side = {
-				side_raw = side_raw;
+				side_raw = Ptr.Ref.of_ptr side_raw_ptr;
 				side_offset = 0; (* not used *)
 				side_bits = side_bits;
 				side_bytes = side_bytes;
 			};
-			f1_data = data_raw;
+			f1_data = Ptr.Ref.of_subptr data_ptr 0 ((data_bits + 7) lsr 3);
 			f1_pad_exact = None;
 		}
 	)
 ;;
 
-let recompress_frame ?(debug = false) f recompress_freq_overflow_warn_ref =
+let recompress_frame ?(debug=false) process_set f recompress_freq_overflow_warn_ref =
+
+	if !first_tick_ref = 0 then (
+		let a = counter () in
+		first_tick_ref := a;
+		last_tick_ref := a;
+	) else (
+		acc_ref outside_ticks_ref
+	);
+
+	let process_function = match process_set with
+		| SSE41 -> find_best_config_sse41
+		| Set_base -> find_best_config
+	in
 
 (*
 	Printf.printf "%d\n" f.f1_num;
-	Printf.printf " Input frame:  \"%s\"\n" (to_hex f.f1_data);
+	Printf.printf " Input frame:  \"%s\"\n" (to_hex f.f1_string);
 *)
-	let (decoded, decoder_error) = decode_frame ~debug:debug f recompress_freq_overflow_warn_ref in
+(*	update_ref ();*)
+	let (decoded, decoder_error) = decode_frame ~debug:debug f process_function recompress_freq_overflow_warn_ref in
+	acc_ref decode_ticks_ref;
 
 	if debug then Printf.printf "Decoder error? %B\n" decoder_error;
 
-	let rehuffed = if true then rehuff_frame ~debug:debug decoded else decoded in
+	let rehuffed = (*if false then rehuff_frame ~debug:debug decoded else*) decoded in
+
+	acc_ref after_c_ticks_ref;
 
 	let encoded = encode_frame ~debug:debug rehuffed in
+	acc_ref encode_ticks_ref;
+
+	(* I'm pretty sure I was trying to return the input frame in case of an error... *)
+	let return_frame = if decoder_error then f else encoded in
+
 (*
-	Printf.printf " Output frame: \"%s\"\n" (to_hex encoded.f1_data);
+	Printf.printf " Output frame: \"%s\"\n" (to_hex encoded.f1_string);
 *)
-	(encoded, decoder_error)
+	if false then (
+(*		let total = !before_c_ticks_ref + !c_ticks_ref + !after_c_ref + !everything_else_ticks_ref in*)
+		(* This will remove the printing time from the calculation of the total time *)
+		let total = get_total () - !print_stuff_ticks_ref in
+		let to_percent x y = int_of_float ((float_of_int x *. 100.0) /. (float_of_int y)) in
+		Printf.printf "B4 decode:  %d (%d%%)\n" !before_decode_ticks_ref (to_percent !before_decode_ticks_ref total);
+		Printf.printf "Dec SCF:    %d (%d%%)\n" !decode_scf_ticks_ref (to_percent !decode_scf_ticks_ref total);
+		Printf.printf "Before decq:%d (%d%%)\n" !before_decode_quant_ticks_ref (to_percent !before_decode_quant_ticks_ref total);
+		Printf.printf "Dec big:    %d (%d%%)\n" !decode_big_quant_ticks_ref (to_percent !decode_big_quant_ticks_ref total);
+		Printf.printf "Dec part1:  %d (%d%%)\n" !decode_part1_quant_ticks_ref (to_percent !decode_part1_quant_ticks_ref total);
+		Printf.printf "After quant:%d (%d%%)\n" !decode_quant_ticks_ref (to_percent !decode_quant_ticks_ref total);
+		Printf.printf "After dec:  %d (%d%%)\n" !decode_ticks_ref (to_percent !decode_ticks_ref total);
+		Printf.printf "Before C:   %d (%d%%)\n" !before_c_ticks_ref (to_percent !before_c_ticks_ref total);
+		Printf.printf "In C:       %d (%d%%)\n" !in_c_ticks_ref (to_percent !in_c_ticks_ref total);
+		Printf.printf "After C:    %d (%d%%)\n" !after_c_ticks_ref (to_percent !after_c_ticks_ref total);
+		Printf.printf "Encode:     %d (%d%%)\n" !encode_ticks_ref (to_percent !encode_ticks_ref total);
+(*		Printf.printf "Print stuff:%d (%d%%)\n" !print_stuff_ticks_ref (to_percent !print_stuff_ticks_ref total);*)
+		Printf.printf "Outside:    %d (%d%%)\n" !outside_ticks_ref (to_percent !outside_ticks_ref total);
+		Printf.printf "Total:      %d\n" total;
+
+		Printf.printf "\n";
+	);
+
+	acc_ref print_stuff_ticks_ref;
+(*	update_ref ();*)
+
+	(return_frame, decoder_error)
 ;;

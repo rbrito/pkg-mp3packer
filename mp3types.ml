@@ -16,6 +16,11 @@
 	Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 *******************************************************************************)
 
+(* Unicode argv *)
+let argv = match Unicode.argv_opt with
+	| Unicode.Normal u -> u
+	| Unicode.Error _ -> Sys.argv
+;;
 
 type ('a,'b) error_t = Normal of 'a | Error of 'b;;
 
@@ -111,6 +116,7 @@ let nul = open_out (if Sys.os_type = "Win32" then "NUL" else "/dev/null");;
 exception Loop_end;;
 
 type 'a option3_t = Zero | One of 'a | Many of 'a option3_t array;;
+type 'a onemany_t = Single of 'a | Multiple of 'a onemany_t array;;
 
 let rec print_option3_array ?(tab="") option3_array stringify =
 	Array.iteri (fun i x ->
@@ -270,7 +276,8 @@ type bitrate_t = {
 };;
 
 type header_t = {
-	header_raw          : string;
+(*	header_raw_string   : string;*)
+	header_raw          : Ptr.Ref.ref_t;
 	header_id           : mpeg_t;
 	header_crc          : bool;
 	header_bitrate      : int;
@@ -307,15 +314,23 @@ let bitrate_index_of_id = function
 
 type input_frame_t = {
 	if_header : header_t;
-	if_side_raw : string;
-	if_data_raw : string;
-	if_frame_raw : string; (* Includes the entire frame (WITH header) *)
+(*	if_side_string : string;*)
+	if_side_raw : Ptr.Ref.ref_t;
+(*	if_data_string : string;*)
+	if_data_raw : Ptr.Ref.ref_t;
+	if_frame_string : string; (* Includes the entire frame (WITH header) *)
 	mutable if_xing : xingTag_t option; (* This is mutable so that read_next_frame can change it *)
 }
 
+(*
 let data_offset_of_if f = match f.if_header.header_id with
-	| MPEG1 -> (Char.code f.if_side_raw.[0] lsl 1) lor (Char.code f.if_side_raw.[1] lsr 7)
-	|   _   -> Char.code f.if_side_raw.[0]
+	| MPEG1 -> (Char.code f.if_side_string.[0] lsl 1) lor (Char.code f.if_side_string.[1] lsr 7)
+	|   _   -> Char.code f.if_side_string.[0]
+;;
+*)
+let data_offset_of_if f = match f.if_header.header_id with
+	| MPEG1 -> Ptr.Ref.get_bits f.if_side_raw 0 9
+	|   _   -> Ptr.Ref.get_bits f.if_side_raw 0 8
 ;;
 
 (* New for mp3read: this lets the reader function find out what is needed *)
@@ -338,7 +353,8 @@ type reqs_t = {
 type if_perhaps_t = Fp_eof | Fp_none | Fp_some of input_frame_t;;
 
 type side_t = {
-	side_raw : string;
+(*	side_raw_string : string;*)
+	side_raw : Ptr.Ref.ref_t;
 	side_offset : int;
 	side_bits : int array;
 	side_bytes : int;
@@ -348,7 +364,8 @@ type f1_t = {
 	f1_num : int;
 	f1_header : header_t;
 	f1_side : side_t;
-	f1_data : string;
+(*	f1_string : string;*)
+	mutable f1_data : Ptr.Ref.ref_t;
 	mutable f1_pad_exact : int option;
 };;
 
@@ -357,7 +374,8 @@ type f2_t = {
 	f2_header : header_t;
 	f2_side : side_t;
 	f2_bitrate : bitrate_t;
-	f2_data : string;
+(*	f2_string : string; (*f2_data*)*)
+	f2_data : Ptr.Ref.ref_t;
 	f2_pad : int;
 	mutable f2_offset : int;
 	mutable f2_bytes_left : int;
@@ -367,13 +385,17 @@ type f2_t = {
 
 type f3_t = {
 	f3_num : int;
-	f3_header_side_raw : string;
-	f3_output_data : string;
+	f3_header_side_raw : Ptr.Ref.ref_t;
+(*	f3_output_string : string;*)
+	mutable f3_output_data : Ptr.Ref.ref_t;
+	f3_bitrate : bitrate_t;
 	mutable f3_flag : bool;
 };;
 
 (* !NEW 20070326 *)
 
+
+type process_set_t = SSE41 | Set_base;;
 
 
 (* NEW FOR THE WORKERS *)
@@ -387,6 +409,7 @@ type queue_input_t = {
 	q_delete_end_junk : bool;
 	q_padding : string;
 	q_recompress : bool;
+	q_process_set : process_set_t;
 	q_zero_whole_bad_frame : bool;
 	q_minimize_bit_reservoir : bool;
 };;
@@ -462,7 +485,9 @@ type worker_ret_t =
 (******)
 
 (* TEMP WINDOWS COUNTER *)
-(*external counter : unit -> int = "win_counter";;*)
+external get_counter_freq : unit -> int = "c_part_counter_freq" "noalloc";;
+let counter_freq = get_counter_freq ();;
+external counter : unit -> int = "c_part_counter" "noalloc";;
 
 
 (* This function is not portable, but it won't be used with non-Windows OSes. That's what Unix.nice is for. *)
@@ -509,6 +534,45 @@ with
 	_ -> 0
 ;;
 
+type capabilities_t = {
+	cap_sse : bool;
+	cap_sse2 : bool;
+	cap_sse3 : bool;
+	cap_ssse3 : bool;
+	cap_sse41 : bool;
+};;
+external get_capabilities : unit -> capabilities_t = "get_capabilities";;
+let capabilities = get_capabilities ();;
+let sse41_ok = capabilities.cap_sse && capabilities.cap_sse2 && capabilities.cap_sse3 && capabilities.cap_ssse3 && capabilities.cap_sse41;;
+
+type os_thread_id;; (* I think this is the same as a Unix.file_descr *)
+external get_os_thread_self_id : unit -> os_thread_id = "get_os_thread_self_id";;
+external thread_is_alive : os_thread_id -> bool = "thread_is_alive";;
+
+external copy_file_times : Unix.file_descr -> Unix.file_descr -> bool = "copy_file_times";;
+let copy_file_times_by_name source target =
+	match trap_exception (Unix.openfile source [Unix.O_RDONLY]) 0o600 with
+	| Normal h_source -> (
+		let ret =
+			match trap_exception (Unix.openfile target [Unix.O_WRONLY]) 0o600 with
+			| Normal h_target -> (
+				let ret =
+					if copy_file_times h_source h_target then (
+						Normal ()
+					) else (
+						Error (Failure "copy_file_times failed")
+					)
+				in
+				ignore @@ trap_exception Unix.close h_target;
+				ret
+			)
+			| Error e -> Error e
+		in
+		ignore @@ trap_exception Unix.close h_source;
+		ret
+	)
+	| Error e -> Error e
+;;
 
 (* Weird padding stuff
 		Each CBR MP3 seems to have a cycle of padded and unpadded frames which lasts
