@@ -23,14 +23,14 @@ open Mp3info;;
 open Mp3types;;
 
 
-Unicode.set_utf8_output ();;
+(*Unicode.set_utf8_output ();;*)
 
 
 
 (*
 let t1 = Unix.gettimeofday ();;
 *)
-let version = "1.25-237";;
+let version = "1.26-fork";;
 
 let padding = Printf.sprintf "mp3packer%s\n" version;;
 
@@ -269,31 +269,28 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 ) else if !rename_input_ref then (
 	(* Rename the input file, and do_queue backwards to update the original filename *)
 	fun a b -> (
-		if Sys.file_exists b then Sys.remove b;
-		Sys.rename a b;
+		Printf.printf "REMOVING %S IF NEEDED\n" b;
+		if Unicode.file_exists_utf8 b then Unicode.remove_utf8 b;
+		ignore @@ Unicode.rename_utf8 a b;
+		let r_obj = new Mp3read.mp3read_ptr ~debug:queue_state.q_debug_in b in
+		let w_obj = new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] a in
 		let errors = (try
-(*			do_queue ~debug_in:(!debug_in_ref) ~debug_queue:(!debug_out_ref) ~min_bitrate:(!min_bitrate_ref) ~delete_beginning_junk:(!delete_begin_ref) ~delete_end_junk:(!delete_end_ref) ~padding:padding ~recompress:(!recompress_ref) ~debug_recompress:(!debug_recompress_ref) ~zero_whole_bad_frame:(!zero_whole_bad_frame_ref) ~minimize_bit_reservoir:minimize_bit_reservoir b a*)
-			do_queue queue_state (*new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in b*)(new Mp3read.mp3read_ptr ~debug:queue_state.q_debug_in b) (new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] a)
+			do_queue queue_state (*new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in b*)r_obj w_obj
 		with
 			(* The only time an End_of_file is reached is when no valid frames were found. Therefore, it's sort of a sync error... *)
-			End_of_file -> (Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1,0))
+			End_of_file -> (
+				r_obj#close;
+				w_obj#close;
+				Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1,0)
+			)
 		) in
 
 		(match (errors, !keep_ok_ref, !keep_notok_ref) with
-			| ((0,0,0), Keep_ok_output, _) -> (Printf.printf "Repacking successful; deleting backup\n"; Sys.remove b)
-			| (_, _, Keep_notok_output) -> (Printf.printf "Repacking not successful, but deleting backup anyway\n"; Sys.remove b)
-			| (_, _, Keep_notok_input) -> (Printf.printf "Repacking NOT successful; deleting output file\n"; Sys.remove a)
+			| ((0,0,0), Keep_ok_output, _) -> (Printf.printf "Repacking successful; deleting backup\n"; Unicode.remove_utf8 b)
+			| (_, _, Keep_notok_output) -> (Printf.printf "Repacking not successful, but deleting backup anyway\n"; Unicode.remove_utf8 b)
+			| (_, _, Keep_notok_input) -> (Printf.printf "Repacking NOT successful; deleting output file\n"; Unicode.remove_utf8 a)
 			| _ -> () (* Keep everything *)
 		);
-(*
-		if !delete_input_ref && errors = None then (
-			Printf.printf "Repacking successful; deleting backup\n" b;
-			Sys.remove b;
-		) else if !delete_bad_output_ref && errors <> None then (
-			Printf.printf "Repacking NOT successful; deleting output file\n" a;
-			Sys.remove a;
-		);
-*)
 		print_errors errors;
 
 		()
@@ -302,33 +299,27 @@ let do_base = if !only_info_ref || !only_info_bitrate_ref then (
 ) else (
 	(* Regular *)
 	fun a b -> (
+		let r_obj = new Mp3read.mp3read_ptr ~debug:queue_state.q_debug_in a in
+		let w_obj = new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] b in
 		let errors = (try
-(*			do_queue ~debug_in:(!debug_in_ref) ~debug_queue:(!debug_out_ref) ~min_bitrate:(!min_bitrate_ref) ~delete_beginning_junk:(!delete_begin_ref) ~delete_end_junk:(!delete_end_ref) ~padding:padding ~recompress:(!recompress_ref) ~debug_recompress:(!debug_recompress_ref) ~zero_whole_bad_frame:(!zero_whole_bad_frame_ref) ~minimize_bit_reservoir:minimize_bit_reservoir a b*)
-			do_queue queue_state (*new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in a*)(new Mp3read.mp3read_ptr ~debug:queue_state.q_debug_in a) (new Mp3write.mp3write_unix ~flags:[Unix.O_TRUNC] b)
+			do_queue queue_state (*new Mp3read.mp3read_unix ~debug:queue_state.q_debug_in a*)r_obj w_obj
 		with
-			End_of_file -> (Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1,0))
+			End_of_file -> (
+				r_obj#close;
+				w_obj#close;
+				Printf.printf "\nWARNING: No valid MP3 headers found\n"; (0,1,0)
+			)
 		) in
 
 		(match (errors, !keep_ok_ref, !keep_notok_ref) with
-			| ((0,0,0), Keep_ok_output, _) -> (Printf.printf "Repacking successful; deleting input file\n"; Sys.remove a)
-			| (_, _, Keep_notok_output) -> (Printf.printf "Repacking not successful, but deleting input anyway\n"; Sys.remove a)
-			| (_, _, Keep_notok_input) -> (Printf.printf "Repacking NOT successful; deleting output file\n"; Sys.remove b)
+			| ((0,0,0), Keep_ok_output, _) -> (Printf.printf "Repacking successful; deleting input file\n"; Unicode.remove_utf8 a)
+			| (_, _, Keep_notok_output) -> (Printf.printf "Repacking not successful, but deleting input anyway\n"; Unicode.remove_utf8 a)
+			| (_, _, Keep_notok_input) -> (Printf.printf "Repacking NOT successful; deleting output file\n"; Unicode.remove_utf8 b)
 			| _ -> () (* Keep everything *)
 		);
 
 		print_errors errors;
 
-
-(*
-		if !delete_input_ref && errors = None then (
-			Printf.printf "Repacking successful; deleting input file\n" a;
-			Sys.remove a
-		) else if !delete_bad_output_ref && errors <> None then (
-			Printf.printf "Repacking NOT successful; deleting output file\n" b;
-			Sys.remove b;
-		);
-*)
-(*		errors*)
 		()
 	)
 );;

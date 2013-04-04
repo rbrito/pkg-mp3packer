@@ -154,3 +154,44 @@ let stat_utf8 = if win then (
 	Unix.stat
 );;
 
+external file_exists_utf16_unsafe : string -> bool = "uni_file_exists_utf16";;
+let file_exists_utf8 = if win then (
+	fun n -> (
+		match utf16_of_utf8 ~include_null:true n with
+		| Normal wn -> file_exists_utf16_unsafe wn
+		| Error e -> failwith (Printf.sprintf "Unicode.file_exists_utf8 got Windows error %d" e)
+	)
+) else (
+	Sys.file_exists
+);;
+
+(* Rename *)
+external rename_utf16_unsafe : string -> string -> unit t = "uni_rename_utf16";;
+let rename_utf8 = if win then (
+	fun n1 n2 -> (
+		match (utf16_of_utf8 ~include_null:true n1, utf16_of_utf8 ~include_null:true n2) with
+		| (Normal wn1, Normal wn2) -> (match rename_utf16_unsafe wn1 wn2 with
+			| Normal () -> ()
+			| Error e -> failwith (Printf.sprintf "Unicode.rename_utf8 got Windows error %d" e)
+		)
+		| (Error e, _) -> failwith (Printf.sprintf "Unicode.rename_utf8 got Windows error %d" e)
+		| (_, Error e) -> failwith (Printf.sprintf "Unicode.rename_utf8 got Windows error %d" e)
+	)
+) else (
+	Sys.rename
+);;
+
+external remove_utf16_unsafe : string -> unit t = "uni_remove_utf16";;
+let remove_utf8 = if win then (
+	fun f -> (match utf16_of_utf8 ~include_null:true f with
+		| Normal f16 -> (
+			match remove_utf16_unsafe f16 with
+			| Normal () -> ()
+			| Error e -> failwith (Printf.sprintf "Unicode.remove_utf8 got Windows error %d" e)
+		)
+		| Error e -> failwith (Printf.sprintf "Unicode.remove_utf8 got Windows error %d" e)
+	)
+) else (
+	Sys.remove
+);;
+

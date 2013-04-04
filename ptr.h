@@ -40,7 +40,8 @@ typedef unsigned __int16 uint16_t;
 enum ptr_type {
 	PTR_MALLOC,
 	PTR_MMAP,
-	PTR_VIRTUALALLOC
+	PTR_VIRTUALALLOC,
+	PTR_NULL // For ignoring
 };
 
 struct ptr_struct {
@@ -80,6 +81,8 @@ static void ptr_finalize(value v) {
 #else
 			break;
 #endif
+		case PTR_NULL:
+			break;
 	}
 }
 

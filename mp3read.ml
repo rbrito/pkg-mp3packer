@@ -617,6 +617,7 @@ class mp3read_ptr ?debug in_file =
 			)
 		)
 		method close = (
+			Ptr.unmap ptr;
 			ptr <- Ptr.make 0 0;
 			len <- 0;
 			Unix.close handle;
