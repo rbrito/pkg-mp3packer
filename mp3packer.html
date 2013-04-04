@@ -295,6 +295,8 @@ INFO:
 <p>Note that these options do not affect file size or compatibility at all. It will only change the internal layout of the data in the frames.</p>
 <h3><a name="changelog" id="changelog">Changelog:</a></h3>
 <dl>
+	<dt>2.04 (2012-08-31)</dt>
+    <dd>Fixed a bug where <code>--copy-time</code> did not work with Unicode filenames.</dd>
 	<dt>2.03 (2012-08-05)</dt>
     <dd>Fixed a bug with the 32-bit build giving errors with files larger than 256MiB. It will still not work with files 1GiB or larger, but the warning is more user-friendly.
 	<dt>2.02 (2012-07-28)</dt>

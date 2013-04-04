@@ -173,7 +173,6 @@ let rec print_option3_array ?(tab="") option3_array stringify =
 	) option3_array
 ;;
 
-
 type lameTag_t = {
 	lameRevision : int;
 	lameVBRMethod : int;
@@ -211,213 +210,6 @@ type xingTag_t = {
 	xingLame : lameTag_t option;
 };;
 
-(*
-type channel_stereo_t = StereoSimple | StereoJoint | StereoDual
-type channel_t = ChannelStereo of channel_stereo_t(* | ChannelJoint | ChannelDual*) | ChannelMono;;
-let channel_index = [| ChannelStereo StereoSimple ; ChannelStereo StereoJoint ; ChannelStereo StereoDual ; ChannelMono |];;
-let string_of_channel = function
-| ChannelStereo StereoSimple -> "ChannelStereo"
-| ChannelStereo StereoJoint  -> "ChannelJoint"
-| ChannelStereo StereoDual   -> "ChannelDual"
-| ChannelMono                -> "ChannelMono"
-;;
-*)
-type channel_t = ChannelStereo | ChannelJoint | ChannelDual | ChannelMono;;
-let channel_index = [| ChannelStereo ; ChannelJoint ; ChannelDual ; ChannelMono |];;
-let string_of_channel = function
-| ChannelStereo -> "ChannelStereo"
-| ChannelJoint  -> "ChannelJoint"
-| ChannelDual   -> "ChannelDual"
-| ChannelMono   -> "ChannelMono"
-;;
-
-
-
-type mpeg_t = MPEG1 | MPEG2 | MPEG25;;
-let mpeg_index = [| MPEG25 ; MPEG25 ; MPEG2 ; MPEG1 |];;
-let string_of_mpeg = function
-| MPEG1  -> "MPEG1"
-| MPEG2  -> "MPEG2"
-| MPEG25 -> "MPEG25"
-;;
-
-(*type layer_t = Layer1 | Layer2 | Layer3;;*) (* ONLY LAYER 3 IS VALID!!1 *)
-
-type emphasis_t = EmphasisNone | Emphasis5015 | EmphasisInvalid | EmphasisCCITT;;
-let emphasis_index = [| EmphasisNone ; Emphasis5015 ; EmphasisInvalid ; EmphasisCCITT |];;
-let string_of_emphasis = function
-| EmphasisNone    -> "EmphasisNone"
-| Emphasis5015    -> "Emphasis5015"
-| EmphasisInvalid -> "EmphasisInvalid"
-| EmphasisCCITT   -> "EmphasisCCITT"
-;;
-
-type samplerate_t = S48000 | S44100 | S32000 | S24000 | S22050 | S16000 | S12000 | S11025 | S8000;;
-let int_of_samplerate = function
-| S48000 -> 48000
-| S44100 -> 44100
-| S32000 -> 32000
-| S24000 -> 24000
-| S22050 -> 22050
-| S16000 -> 16000
-| S12000 -> 12000
-| S11025 -> 11025
-|  S8000 ->  8000
-;;
-let float_of_samplerate = function
-| S48000 -> 48000.
-| S44100 -> 44100.
-| S32000 -> 32000.
-| S24000 -> 24000.
-| S22050 -> 22050.
-| S16000 -> 16000.
-| S12000 -> 12000.
-| S11025 -> 11025.
-|  S8000 ->  8000.
-;;
-
-(**********************************)
-(* NEW FOR MP3READ AS OF 20070326 *)
-(**********************************)
-let unpadded_frame_length samplerate bitrate =
-	if int_of_samplerate samplerate < 32000 then (
-		 72000 * bitrate / int_of_samplerate samplerate
-	) else (
-		144000 * bitrate / int_of_samplerate samplerate
-	)
-;;
-
-type bitrate_t = {
-	bitrate_data : int;
-	bitrate_size : int;
-	bitrate_num : int;
-	bitrate_padding : bool;
-	bitrate_index : int;
-};;
-
-type header_t = {
-(*	header_raw_string   : string;*)
-	header_raw          : Ptr.Ref.ref_t;
-	header_id           : mpeg_t;
-	header_crc          : bool;
-	header_bitrate      : int;
-	header_samplerate   : samplerate_t;
-	header_padding      : bool;
-	header_private      : bool;
-	header_channel_mode : channel_t;
-	header_ms           : bool;
-	header_is           : bool;
-	header_copyright    : bool;
-	header_original     : bool;
-	header_emphasis     : emphasis_t;
-};;
-let frame_length_of_header h = match h.header_id with
-	| MPEG1 -> 144000 * h.header_bitrate / int_of_samplerate h.header_samplerate + (if h.header_padding then 1 else 0)
-	| MPEG2 | MPEG25 ->  72000 * h.header_bitrate / int_of_samplerate h.header_samplerate + (if h.header_padding then 1 else 0)
-;;
-(* Hooray for byte seconds per frame kilobit! *)
-let bspfk_of_samplerate = function
-	| S48000 -> 3.
-	| S44100 -> 160. /. 49.
-	| S32000 -> 9. /. 2.
-	| S24000 -> 3.
-	| S22050 -> 160. /. 49.
-	| S16000 -> 9. /. 2.
-	| S12000 -> 6.
-	| S11025 -> 320. /. 49.
-	| S8000  -> 9.
-;;
-let bitrate_index_of_id = function
-	| MPEG1 ->          [| 0;32;40;48;56;64;80;96;112;128;160;192;224;256;320 |]
-	| MPEG2 | MPEG25 -> [| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |]
-;;
-let samplerate_index_of_id = function
-	| MPEG1 ->  [| S44100;S48000;S32000 |]
-	| MPEG2 ->  [| S22050;S24000;S16000 |]
-	| MPEG25 -> [| S11025;S12000; S8000 |]
-;;
-
-type input_frame_t = {
-	if_raw : Ptr.Ref.ref_t;
-	if_header : header_t;
-	if_side_raw : Ptr.Ref.ref_t;
-	if_data_raw : Ptr.Ref.ref_t;
-	if_crc_ok : bool; (* Also true if the frame has no CRC *)
-	mutable if_xing : xingTag_t option; (* This is mutable so that read_next_frame can change it *)
-}
-
-(*
-let data_offset_of_if f = match f.if_header.header_id with
-	| MPEG1 -> (Char.code f.if_side_string.[0] lsl 1) lor (Char.code f.if_side_string.[1] lsr 7)
-	|   _   -> Char.code f.if_side_string.[0]
-;;
-*)
-let data_offset_of_if f = match f.if_header.header_id with
-	| MPEG1 -> Ptr.Ref.get_bits f.if_side_raw 0 9
-	| MPEG2 | MPEG25 -> Ptr.Ref.get_bits f.if_side_raw 0 8
-;;
-
-(* New for mp3read: this lets the reader function find out what is needed *)
-type 'a req_t = Req_any | Req_equal | Req_matches of 'a list;;
-type reqs_t = {
-	req_id           : mpeg_t req_t;
-	req_crc          : bool req_t;
-	req_bitrate      : int req_t;
-	req_samplerate   : samplerate_t req_t;
-	req_padding      : bool req_t;
-	req_private      : bool req_t;
-	req_channel_mode : channel_t req_t;
-	req_ms           : bool req_t;
-	req_is           : bool req_t;
-	req_copyright    : bool req_t;
-	req_original     : bool req_t;
-	req_emphasis     : emphasis_t req_t;
-};;
-
-type if_perhaps_t = Fp_eof | Fp_none | Fp_some of input_frame_t;;
-
-type side_t = {
-(*	side_raw_string : string;*)
-	side_raw : Ptr.Ref.ref_t;
-	side_offset : int;
-	side_bits : int array;
-	side_bytes : int;
-};;
-
-type f1_t = {
-	f1_num : int;
-	f1_header : header_t;
-	f1_side : side_t;
-(*	f1_string : string;*)
-	mutable f1_data : Ptr.Ref.ref_t;
-	mutable f1_pad_exact : int option;
-};;
-
-type f2_t = {
-	f2_num : int;
-	f2_header : header_t;
-	f2_side : side_t;
-	f2_bitrate : bitrate_t;
-(*	f2_string : string; (*f2_data*)*)
-	f2_data : Ptr.Ref.ref_t;
-	f2_pad : int;
-	mutable f2_offset : int;
-	mutable f2_bytes_left : int;
-	mutable f2_flag : bool;
-	mutable f2_check_output : bool; (* if the frame may have a gap before it (or before any previous frame, if needed) *)
-};;
-
-type f3_t = {
-	f3_num : int;
-	f3_header_side_raw : Ptr.Ref.ref_t;
-(*	f3_output_string : string;*)
-	mutable f3_output_data : Ptr.Ref.ref_t;
-	f3_bitrate : bitrate_t;
-	mutable f3_flag : bool;
-};;
-
-(* !NEW 20070326 *)
-
 
 type process_set_t = SSE41 | Set_base;;
 
@@ -437,24 +229,11 @@ type (*'a,'b*) queue_input_t = {
 	q_zero_whole_bad_frame : bool;
 	q_minimize_bit_reservoir : bool;
 
-(*
-	q_recompress_fun : 'a -> 'b;
-	q_recompress_obj : ('a,'b) Threadpool.per_function;
-*)
 	q_print_in : p_type list -> unit;
 	q_print_queue : p_type list -> unit;
 	q_print_recompress : p_type list -> unit;
 };;
-(*
-type file_state_t = {
-	fs_mutex : Mutex.t; (* Everything under this should be protected by this mutex *)
-	mutable fs_freq_overflow_warn : bool;
-};;
-let new_file_state () = {
-	fs_mutex = Mutex.create ();
-	fs_freq_overflow_warn = true;
-};;
-*)
+
 class file_state =
 	object
 
@@ -517,53 +296,6 @@ type worker_ok_file_t = {
 	worker_output_result : (int * int * int);
 };;
 
-(* Exceptions are no good to transfer between processes, so make a more concrete type *)
-(*
-type worker_fail_exception_t =
-	| Worker_fail_end_of_file
-	| Worker_fail_invalid_argument of string
-	| Worker_fail_failure of string
-	| Worker_fail_not_found
-	| Worker_fail_out_of_memory
-	| Worker_fail_stack_overflow
-	| Worker_fail_sys_error of string
-	| Worker_fail_division_by_zero
-	| Worker_fail_other of string (* Should be the result of Printexc.to_string e *)
-;;
-let string_of_worker_exn = function
-	| Worker_fail_end_of_file -> Printexc.to_string End_of_file
-	| Worker_fail_invalid_argument s -> Printexc.to_string @@ Invalid_argument s
-	| Worker_fail_failure s -> Printexc.to_string @@ Failure s
-	| Worker_fail_not_found -> Printexc.to_string Not_found
-	| Worker_fail_out_of_memory -> Printexc.to_string Out_of_memory
-	| Worker_fail_stack_overflow -> Printexc.to_string Stack_overflow
-	| Worker_fail_sys_error s -> Printexc.to_string @@ Sys_error s
-	| Worker_fail_division_by_zero -> Printexc.to_string @@ Division_by_zero
-	| Worker_fail_other s -> s
-;;
-let worker_exn_of_exn = function
-	| End_of_file -> Worker_fail_end_of_file
-	| Invalid_argument s -> Worker_fail_invalid_argument s
-	| Failure s -> Worker_fail_failure s
-	| Not_found -> Worker_fail_not_found
-	| Out_of_memory -> Worker_fail_out_of_memory
-	| Stack_overflow -> Worker_fail_stack_overflow
-	| Sys_error s -> Worker_fail_sys_error s
-	| Division_by_zero -> Worker_fail_division_by_zero
-	| e -> Worker_fail_other (Printexc.to_string e)
-;;
-
-type worker_fail_t = {
-	worker_fail_index : int;
-	worker_exception : worker_fail_exception_t;
-};;
-type worker_ret_t =
-	| Worker_ok of worker_ok_file_t
-	| Worker_fail of worker_fail_t
-	| Worker_skipped of int
-	| Worker_done
-;;
-*)
 
 
 
@@ -638,10 +370,10 @@ external thread_is_alive : os_thread_id -> bool = "thread_is_alive";;
 
 external copy_file_times : Unix.file_descr -> Unix.file_descr -> bool = "copy_file_times";;
 let copy_file_times_by_name source target =
-	match trap_exception (Unix.openfile source [Unix.O_RDONLY]) 0o600 with
+	match trap_exception (Unicode.openfile_utf8 source [Unix.O_RDONLY]) 0o600 with
 	| Normal h_source -> (
 		let ret =
-			match trap_exception (Unix.openfile target [Unix.O_WRONLY]) 0o600 with
+			match trap_exception (Unicode.openfile_utf8 target [Unix.O_WRONLY]) 0o600 with
 			| Normal h_target -> (
 				let ret =
 					if copy_file_times h_source h_target then (
@@ -671,202 +403,374 @@ external p_print_int_test : Buffer.t -> int -> unit = "p_print_int_test";;
 
 
 
-
-
-(* Weird padding stuff
-		Each CBR MP3 seems to have a cycle of padded and unpadded frames which lasts
-		49 frames. Some have a cycle that only lasts 7 frames, but this can be
-		expanded to 49. The samplerates that are not a multiple of 11025 have no
-		padded frames, whereas the other samplerates have these complex patterns
-*)
 exception Too_many_bytes;;
-let padded_frame samplerate bitrate frameno =
-	let f = frameno mod 49 in
-	match (samplerate, bitrate) with
-	| (S44100,  32) -> [| false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true |].(f)
-	| (S44100,  40) -> [| false;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;true |].(f)
-	| (S44100,  48) -> [| false;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true |].(f)
-	| (S44100,  56) -> [| false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true |].(f)
-	| (S44100,  64) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S44100,  80) -> [| false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;true |].(f)
-	| (S44100,  96) -> [| false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true |].(f)
-	| (S44100, 112) -> [| false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true |].(f)
-	| (S44100, 128) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S44100, 160) -> [| false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true |].(f)
-	| (S44100, 192) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S44100, 224) -> [| false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true |].(f)
-	| (S44100, 256) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S44100, 320) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S44100,  _ ) -> invalid_arg "padded_frame invalid bitrate"
 
-	| (S22050,   8) -> [| false;false;false;false;false;false;false;false;true ;false;false;false;false;false;false;false;true ;false;false;false;false;false;false;false;true ;false;false;false;false;false;false;false;true ;false;false;false;false;false;false;false;true ;false;false;false;false;false;false;false;true |].(f)
-	| (S22050,  16) -> [| false;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true |].(f)
-	| (S22050,  24) -> [| false;false;true ;false;false;true ;false;false;true ;false;true ;false;false;true ;false;false;true ;false;false;true ;false;true ;false;false;true ;false;false;true ;false;true ;false;false;true ;false;false;true ;false;false;true ;false;true ;false;false;true ;false;false;true ;false;true |].(f)
-	| (S22050,  32) -> [| false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true |].(f)
-	| (S22050,  40) -> [| false;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;false;true ;true ;false;true ;true |].(f)
-	| (S22050,  48) -> [| false;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true |].(f)
-	| (S22050,  56) -> [| false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true |].(f)
-	| (S22050,  64) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S22050,  80) -> [| false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;true |].(f)
-	| (S22050,  96) -> [| false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true |].(f)
-	| (S22050, 112) -> [| false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true |].(f)
-	| (S22050, 128) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S22050, 144) -> [| false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;false;true ;false;false;false;true |].(f)
-	| (S22050, 160) -> [| false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true |].(f)
-	| (S22050,  _ ) -> invalid_arg "padded_frame invalid bitrate"
+(* General form of if_perhaps_t *)
+type 'a good_bad_eof = Ret_eof | Ret_none | Ret_some of 'a;;
 
-	| (S11025,   8) -> [| false;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true ;false;false;false;true |].(f)
-	| (S11025,  16) -> [| false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true |].(f)
-	| (S11025,  24) -> [| false;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true ;false;true ;true ;true |].(f)
-	| (S11025,  32) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S11025,  40) -> [| false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;false;true ;false;false;false;true ;false;false;false;true |].(f)
-	| (S11025,  48) -> [| false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true ;false;true |].(f)
-	| (S11025,  56) -> [| false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true ;false;true ;true ;false;true ;true ;true |].(f)
-	| (S11025,  64) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S11025,  80) -> [| false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;true ;false;true |].(f)
-	| (S11025,  96) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S11025, 112) -> [| false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;true |].(f)
-	| (S11025, 128) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S11025, 144) -> [| false;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;false;true ;false;true ;false;true |].(f)
-	| (S11025, 160) -> [| false;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true ;false;true ;true ;true ;true ;true ;true ;true ;true ;true |].(f)
-	| (S11025,  _ ) -> invalid_arg "padded_frame invalid bitrate"
+type mpeg1_t;;
+type mpeg20_t;;
+type mpeg25_t;;
+type _ mpeg2_t =
+	| MPEG20 : mpeg20_t mpeg2_t
+	| MPEG25 : mpeg25_t mpeg2_t
+;;
+type _ mpeg_t =
+	| MPEG1 : mpeg1_t mpeg_t
+	| MPEG2 : 'a mpeg2_t -> 'a mpeg2_t mpeg_t
+;;
+type mpeg_ext = MPEG_ext : 'a mpeg_t -> mpeg_ext;;
+let mpeg_equal a b = (MPEG_ext a = MPEG_ext b);;
 
-	| (S48000,_) | (S32000,_) | (S24000,_) | (S16000,_) | (S12000,_) | (S8000,_) -> false (* All other samplerates *)
+type _ samplerate_t =
+	| S48000 : mpeg1_t samplerate_t
+	| S44100 : mpeg1_t samplerate_t
+	| S32000 : mpeg1_t samplerate_t
+	| S24000 : mpeg20_t mpeg2_t samplerate_t
+	| S22050 : mpeg20_t mpeg2_t samplerate_t
+	| S16000 : mpeg20_t mpeg2_t samplerate_t
+	| S12000 : mpeg25_t mpeg2_t samplerate_t
+	| S11025 : mpeg25_t mpeg2_t samplerate_t
+	| S8000  : mpeg25_t mpeg2_t samplerate_t
+;;
+type samplerate_ext = Samplerate_ext : 'a samplerate_t -> samplerate_ext;;
+let samplerate_equal a b = (Samplerate_ext a = Samplerate_ext b);;
+
+type channel_mono_t;;
+type channel_js_t = {js_ms : bool; js_is : bool};;
+type channel_stereo_t = Stereo_simple | Stereo_joint of channel_js_t | Stereo_dual;;
+
+type _ channel_t =
+	| Mono : channel_mono_t channel_t
+	| Stereo : channel_stereo_t -> channel_stereo_t channel_t
+;;
+type channel_ext = Channel_ext : 'chan channel_t -> channel_ext;;
+let channel_equal a b = (Channel_ext a = Channel_ext b);;
+let channel_mode_equal : type a b. a channel_t -> b channel_t -> bool = fun a b ->
+	match (a,b) with
+	| (Mono, Mono) -> true
+	| (Stereo Stereo_simple, Stereo Stereo_simple) -> true
+	| (Stereo Stereo_joint _, Stereo Stereo_joint _) -> true
+	| (Stereo Stereo_dual, Stereo Stereo_dual) -> true
+	| _ -> false
+;;
+let channel_count_equal : type a b. a channel_t -> b channel_t -> bool = fun a b ->
+	match (a,b) with
+	| (Mono, Mono) -> true
+	| (Mono, _) -> false
+	| (_, Mono) -> false
+	| _ -> true
+;;
+
+type bitrate_t = {
+	bitrate_data : int; (* This is NOT counting the CRC bytes! Subtract 2 if the frame uses CRC *)
+	bitrate_size : int;
+	bitrate_num : int;
+	bitrate_padding : bool;
+	bitrate_index : int;
+};;
+
+type emphasis_t = Emphasis_none | Emphasis_5015 | Emphasis_CCITT;;
+
+type ('id,'chan) header_t = {
+	header_raw : Ptr.Ref.ref_t;
+	header_id : 'id mpeg_t;
+	header_crc : bool;
+	header_bitrate : bitrate_t;
+	header_samplerate : 'id samplerate_t;
+	header_padding : bool;
+	header_private : bool;
+	header_channel_mode : 'chan channel_t;
+	header_copyright : bool;
+	header_original : bool;
+	header_emphasis : emphasis_t;
+};;
+type header_ext = Header_ext : ('id,'chan) header_t -> header_ext;;
+
+type (_,_) side_bits_t =
+	| Bits_1_mono   : int * int -> (mpeg1_t, channel_mono_t) side_bits_t
+	| Bits_1_stereo : int * int * int * int -> (mpeg1_t, channel_stereo_t) side_bits_t
+	| Bits_2_mono   : int -> (_ mpeg2_t, channel_mono_t) side_bits_t
+	| Bits_2_stereo : int * int -> (_ mpeg2_t, channel_stereo_t) side_bits_t
+;;
+
+type ('id,'chan) side_t = {
+	side_raw : Ptr.Ref.ref_t;
+	side_offset : int;
+	side_bits : ('id,'chan) side_bits_t;
+	side_bytes : int;
+};;
+
+
+(* Now to stuff everything into a frame (of various types) *)
+type ('id,'chan) input_frame_t = {
+	if_raw : Ptr.Ref.ref_t;
+	if_header : ('id,'chan) header_t;
+	if_side_raw : Ptr.Ref.ref_t;
+	if_data_raw : Ptr.Ref.ref_t;
+	if_crc_ok : bool;
+	mutable if_xing : xingTag_t option;
+};;
+type input_frame_ext = IF_ext : ('id,'chan) input_frame_t -> input_frame_ext;;
+
+type ('id,'chan) f1_t = {
+	f1_num : int;
+	f1_header : ('id,'chan) header_t;
+	f1_side : ('id,'chan) side_t;
+	mutable f1_data : Ptr.Ref.ref_t;
+	mutable f1_pad_exact : int option;
+};;
+type f1_ext = F1_ext : ('id,'chan) f1_t -> f1_ext;;
+
+type ('id,'chan) f2_t = {
+	f2_num : int;
+	f2_header : ('id,'chan) header_t;
+	f2_side : ('id,'chan) side_t;
+	f2_bitrate : bitrate_t;
+	f2_data : Ptr.Ref.ref_t;
+	f2_pad : int;
+	mutable f2_offset : int;
+	mutable f2_bytes_left : int;
+	mutable f2_flag : bool;
+	mutable f2_check_output : bool; (* if the frame may have a gap before it (or before any previous frame, if needed) *)
+};;
+type f2_ext = F2_ext : ('id,'chan) f2_t -> f2_ext;;
+
+type ('id,'chan) f3_t = {
+	f3_num : int;
+	f3_header_side_raw : Ptr.Ref.ref_t;
+	mutable f3_output_data : Ptr.Ref.ref_t;
+	f3_bitrate : bitrate_t;
+	mutable f3_flag : bool;
+};;
+type f3_ext = F3_ext : ('id,'chan) f3_t -> f3_ext;;
+
+type 'a req_t = Req_any | Req_equal | Req_matches of 'a list;;
+
+(* Have to redefine this since the ids and samplerates are different *)
+(* Use the _ext versions of the types to avoid nastiness *)
+type reqs_t = {
+	req_id            : mpeg_ext req_t;
+	req_crc           : bool req_t;
+	req_bitrate       : int req_t;
+	req_samplerate    : samplerate_ext req_t;
+	req_padding       : bool req_t;
+	req_private       : bool req_t;
+	req_channel_mode  : channel_ext req_t;
+	req_channel_count : int req_t;
+	req_copyright     : bool req_t;
+	req_original      : bool req_t;
+	req_emphasis      : emphasis_t req_t;
+};;
+
+
+
+
+(* Type-related definitions *)
+let header_bytes = 4;;
+let side_bytes_of_id_channel : type id chan. id mpeg_t -> chan channel_t -> int = function
+	| MPEG1 -> (function
+		| Mono -> 17
+		| Stereo _ -> 32
+	)
+	| MPEG2 _ -> (function
+		| Mono -> 9
+		| Stereo _ -> 17
+	)
+;;
+let side_bytes_of_header : type id chan. (id,chan) header_t -> int = fun h -> side_bytes_of_id_channel h.header_id h.header_channel_mode;;
+
+let string_of_mpeg : type id. id mpeg_t -> string = function
+	| MPEG1 -> "MPEG1"
+	| MPEG2 MPEG20 -> "MPEG2"
+	| MPEG2 MPEG25 -> "MPEG25"
+;;
+let string_of_mpeg_ext (MPEG_ext x) = string_of_mpeg x;;
+let int_of_samplerate : type id. id samplerate_t -> int = function
+	| S48000 -> 48000
+	| S44100 -> 44100
+	| S32000 -> 32000
+	| S24000 -> 24000
+	| S22050 -> 22050
+	| S16000 -> 16000
+	| S12000 -> 12000
+	| S11025 -> 11025
+	|  S8000 ->  8000
+;;
+let float_of_samplerate : type id. id samplerate_t -> float = function
+	| S48000 -> 48000.
+	| S44100 -> 44100.
+	| S32000 -> 32000.
+	| S24000 -> 24000.
+	| S22050 -> 22050.
+	| S16000 -> 16000.
+	| S12000 -> 12000.
+	| S11025 -> 11025.
+	|  S8000 ->  8000.
+;;
+let string_of_samplerate sr = string_of_int (int_of_samplerate sr);;
+let string_of_samplerate_ext (Samplerate_ext sr) = string_of_samplerate sr;;
+
+let count_of_channel : type chan. chan channel_t -> int = function
+	| Mono -> 1
+	| Stereo _ -> 2
+;;
+let count_of_channel_ext (Channel_ext c) = count_of_channel c;;
+let string_of_channel : type chan. chan channel_t -> string = function
+	| Mono -> "Mono"
+	| Stereo Stereo_simple -> "SimpleStereo"
+	| Stereo (Stereo_joint _) -> "JointStereo"
+	| Stereo Stereo_dual -> "DualStereo"
+;;
+let string_of_channel_ext (Channel_ext c) = string_of_channel c;;
+
+(* Byte seconds per frame kilobit *)
+let bspfk_of_samplerate : type id. id samplerate_t -> _ = function
+	| S48000 -> 3.
+	| S44100 -> 160. /. 49.
+	| S32000 -> 9. /. 2.
+	| S24000 -> 3.
+	| S22050 -> 160. /. 49.
+	| S16000 -> 9. /. 2.
+	| S12000 -> 6.
+	| S11025 -> 320. /. 49.
+	| S8000  -> 9.
+;;
+
+let mpeg_of_samplerate : type id. id samplerate_t -> id mpeg_t = function
+	| S48000 -> MPEG1
+	| S44100 -> MPEG1
+	| S32000 -> MPEG1
+	| S24000 -> MPEG2 MPEG20
+	| S22050 -> MPEG2 MPEG20
+	| S16000 -> MPEG2 MPEG20
+	| S12000 -> MPEG2 MPEG25
+	| S11025 -> MPEG2 MPEG25
+	| S8000  -> MPEG2 MPEG25
+;;
+
+let unpadded_frame_length : type id. id samplerate_t -> int -> int = fun samplerate bitrate ->
+	match mpeg_of_samplerate samplerate with
+	| MPEG1 -> 144000 * bitrate / int_of_samplerate samplerate
+	| MPEG2 _ -> 72000 * bitrate / int_of_samplerate samplerate
+;;
+
+let bitrate_array_of_id : type id. id mpeg_t -> int array = function
+	| MPEG1 ->   [| 0;32;40;48;56;64;80;96;112;128;160;192;224;256;320 |]
+	| MPEG2 _ -> [| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |]
+;;
+let samplerate_array_of_id : type id. id mpeg_t -> id samplerate_t array = function
+	| MPEG1 ->        [| S44100;S48000;S32000 |]
+	| MPEG2 MPEG20 -> [| S22050;S24000;S16000 |]
+	| MPEG2 MPEG25 -> [| S11025;S12000; S8000 |]
+;;
+
+let id_index_of_samplerate : type id. id samplerate_t -> int = function
+	| S44100 -> 0
+	| S48000 -> 1
+	| S32000 -> 2
+	| S22050 -> 0
+	| S24000 -> 1
+	| S16000 -> 2
+	| S11025 -> 0
+	| S12000 -> 1
+	| S8000  -> 2
+;;
+
+let bitrate_of_samplerate_and_index : type id chan. id samplerate_t -> chan channel_t -> _ = fun sr chan ->
+	let unpadded_frame_length_of_bitrate_int = unpadded_frame_length sr in
+	let mpeg_id = mpeg_of_samplerate sr in
+	let side_info_size = side_bytes_of_id_channel mpeg_id chan in
+	let bitrate_array = bitrate_array_of_id mpeg_id in
+	fun index padding -> (
+		if index >= Array.length bitrate_array || index < 0 then failwith "bitrate_of_samplerate_and_index invalid index";
+		let bitrate_int = bitrate_array.(index) in
+		let frame_bytes = unpadded_frame_length_of_bitrate_int bitrate_int in
+		let add_pad = if padding then 1 else 0 in
+		{
+			bitrate_data = frame_bytes - header_bytes - side_info_size + add_pad;
+			bitrate_size = frame_bytes + add_pad;
+			bitrate_num = bitrate_int;
+			bitrate_padding = padding;
+			bitrate_index = index;
+		}
+	)
+;;
+
+let string_of_emphasis = function
+	| Emphasis_none -> "None"
+	| Emphasis_5015 -> "50/15"
+	| Emphasis_CCITT -> "CCITT"
 ;;
 
 
-
-(**
-module Types2 =
-	struct
-
-
-	type mpeg1_t;;
-	type mpeg20_t;;
-	type mpeg25_t;;
-	type _ mpeg2_t =
-		| MPEG20 : mpeg20_t mpeg2_t
-		| MPEG25 : mpeg25_t mpeg2_t
-	;;
-	type _ mpeg_t =
-		| MPEG1 : mpeg1_t mpeg_t
-		| MPEG2 : 'a mpeg2_t -> 'a mpeg2_t mpeg_t
-	;;
-
-	type _ samplerate_t =
-		| S48000 : mpeg1_t samplerate_t
-		| S44100 : mpeg1_t samplerate_t
-		| S32000 : mpeg1_t samplerate_t
-		| S24000 : mpeg20_t mpeg2_t samplerate_t
-		| S22050 : mpeg20_t mpeg2_t samplerate_t
-		| S16000 : mpeg20_t mpeg2_t samplerate_t
-		| S12000 : mpeg25_t mpeg2_t samplerate_t
-		| S11025 : mpeg25_t mpeg2_t samplerate_t
-		| S8000  : mpeg25_t mpeg2_t samplerate_t
-	;;
-
-	let id_of_index = function
-		| 0 -> Reg_MPEG25
-		| 3 -> Reg_MPEG1
-	;;
-
-	let samplerate_of_id : type a. a mpeg_t -> a samplerate_t array = function
-		| MPEG1 -> [| S48000 |]
-		| MPEG2 MPEG20 -> [| S24000 |]
-		| MPEG2 MPEG25 -> [| S12000 |]
-	;;
-
-
-	type channel_mono_t;;
-
-	type channel_js_t = {js_ms : bool; js_is : bool};;
-	type channel_stereo_t = Stereo_simple | Stereo_joint of channel_js_t | Stereo_dual;;
-
-	type _ channel_t =
-		| Channel_mono : channel_mono_t channel_t
-		| Channel_stereo : channel_stereo_t -> channel_stereo_t channel_t
-	;;
-
-	type bitrate_t = {
-		bitrate_data : int;
-		bitrate_size : int;
-		bitrate_num : int;
-		bitrate_padding : bool;
-		bitrate_index : int;
-	};;
-
-	type emphasis_t = Emphasis_none | Emphasis_5015 | Emphasis_CCITT;;
-
-	type ('id,'chan) header_t = {
-	(*	header_int : int;*)
-		header_id : 'id mpeg_t;
-		header_crc : bool;
-		header_bitrate : bitrate_t;
-		header_samplerate : 'id samplerate_t;
-		header_padding : bool;
-		header_private : bool;
-		header_channel_mode : 'chan channel_t;
-		header_copyright : bool;
-		header_original : bool;
-		header_emphasis : emphasis_t;
-	};;
-
-
-	type (_,_) side_bits_t =
-		| Gran_1_mono : (int * int) -> (mpeg1_t, channel_mono_t) side_bits_t
-		| Gran_1_stereo : (int * int * int * int) -> (mpeg1_t, channel_stereo_t) side_bits_t
-		| Gran_2_mono : int -> (_ mpeg2_t, channel_mono_t) side_bits_t
-		| Gran_2_stereo : (int * int) -> (_ mpeg2_t, channel_stereo_t) side_bits_t
-	;;
-
-	type ('id,'chan) side_t = {
-		side_raw : Ptr.Ref.ref_t;
-		side_offset : int;
-		side_bits : ('id,'chan) side_bits_t;
-		side_bytes : int;
-	};;
-
-	type ('id,'chan) input_frame_t = {
-		if_raw : Ptr.Ref.ref_t;
-		if_header : ('id,'chan) header_t;
-		if_side_raw : Ptr.Ref.ref_t;
-		if_data_raw : Ptr.Ref.ref_t;
-		if_crc_ok : bool;
-		mutable if_xing : xingTag_t option;
-	};;
-
-	type ('id,'chan) f1_t = {
-		f1_num : int;
-		f1_header : ('id,'chan) header_t;
-		f1_side : ('id,'chan) side_t;
-		mutable f1_data : Ptr.Ref.ref_t;
-		mutable f1_pad_exact : int option; (* I really don't know what this does *)
-	};;
-
-	type ('id,'chan) f2_t = {
-		f2_num : int;
-		f2_header : ('id,'chan) header_t;
-		f2_side : ('id,'chan) side_bits_t;
-		f2_bitrate : bitrate_t;
-		f2_data : Ptr.Ref.ref_t;
-		f2_pad : int;
-		mutable f2_offest : int;
-		mutable f2_bytes_left : int;
-		mutable f2_flag : bool;
-		mutable f2_check_output : bool; (* if the frame may have a gap before it (or before any previous frame, if needed) *)
-	};;
-
-	type f3_t = {
-		f3_num : int;
-		f3_header_side_raw : Ptr.Ref.ref_t;
-		mutable f3_output_data : Ptr.Ref.ref_t;
-		f3_bitrate : bitrate_t;
-		mutable f3_flag : bool; (* WHAT ON EARTH ARE THESE FLAGS? *)
-	};;
-
-
-
-	end
+let padded_frame : type id. id samplerate_t -> int -> int -> bool =
+	let l = true in
+	let o = false in
+	function
+		| S44100 -> (fun bitrate frameno ->
+			let f = frameno mod 49 in
+			match bitrate with
+			|  32 -> [| o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l|].(f)
+			|  40 -> [| o;l;o;l;l;o;l;o;l;l;o;l;o;l;l;o;l;l;o;l;o;l;l;o;l;o;l;l;o;l;o;l;l;o;l;l;o;l;o;l;l;o;l;o;l;l;o;l;l|].(f)
+			|  48 -> [| o;l;l;o;l;l;l;o;l;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;l;o;l;l;l;o;l;l;l|].(f)
+			|  56 -> [| o;l;l;l;l;l;l;o;l;l;l;l;l;l;o;l;l;l;l;l;l;o;l;l;l;l;l;l;o;l;l;l;l;l;l;o;l;l;l;l;l;l;o;l;l;l;l;l;l|].(f)
+			|  64 -> [| o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l|].(f)
+			|  80 -> [| o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;l|].(f)
+			|  96 -> [| o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l|].(f)
+			| 112 -> [| o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l|].(f)
+			| 128 -> [| o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l|].(f)
+			| 160 -> [| o;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l|].(f)
+			| 192 -> [| o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l|].(f)
+			| 224 -> [| o;o;l;o;l;o;l;o;o;l;o;l;o;l;o;o;l;o;l;o;l;o;o;l;o;l;o;l;o;o;l;o;l;o;l;o;o;l;o;l;o;l;o;o;l;o;l;o;l|].(f)
+			| 256 -> [| o;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;l|].(f)
+			| 320 -> [| o;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l|].(f)
+			|  _  -> invalid_arg "padded_frame invalid bitrate"
+		)
+		| S22050 -> (fun bitrate frameno ->
+			let f = frameno mod 49 in
+			match bitrate with
+			|   8 -> [| o;o;o;o;o;o;o;o;l;o;o;o;o;o;o;o;l;o;o;o;o;o;o;o;l;o;o;o;o;o;o;o;l;o;o;o;o;o;o;o;l;o;o;o;o;o;o;o;l|].(f)
+			|  16 -> [| o;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l|].(f)
+			|  24 -> [| o;o;l;o;o;l;o;o;l;o;l;o;o;l;o;o;l;o;o;l;o;l;o;o;l;o;o;l;o;l;o;o;l;o;o;l;o;o;l;o;l;o;o;l;o;o;l;o;l|].(f)
+			|  32 -> [| o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l|].(f)
+			|  40 -> [| o;l;o;l;l;o;l;o;l;l;o;l;o;l;l;o;l;l;o;l;o;l;l;o;l;o;l;l;o;l;o;l;l;o;l;l;o;l;o;l;l;o;l;o;l;l;o;l;l|].(f)
+			|  48 -> [| o;l;l;o;l;l;l;o;l;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;l;o;l;l;l;o;l;l;l|].(f)
+			|  56 -> [| o;l;l;l;l;l;l;o;l;l;l;l;l;l;o;l;l;l;l;l;l;o;l;l;l;l;l;l;o;l;l;l;l;l;l;o;l;l;l;l;l;l;o;l;l;l;l;l;l|].(f)
+			|  64 -> [| o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l|].(f)
+			|  80 -> [| o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;l|].(f)
+			|  96 -> [| o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l|].(f)
+			| 112 -> [| o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l|].(f)
+			| 128 -> [| o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l|].(f)
+			| 144 -> [| o;o;o;o;l;o;o;o;o;l;o;o;o;o;l;o;o;o;o;l;o;o;o;o;l;o;o;o;o;l;o;o;o;o;l;o;o;o;o;l;o;o;o;o;l;o;o;o;l|].(f)
+			| 160 -> [| o;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l|].(f)
+			|  _  -> invalid_arg "padded_frame invalid bitrate"
+		)
+		| S11025 -> (fun bitrate frameno ->
+			let f = frameno mod 49 in
+			match bitrate with
+			|   8 -> [| o;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l;o;o;o;l|].(f)
+			|  16 -> [| o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l|].(f)
+			|  24 -> [| o;l;l;o;l;l;l;o;l;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;l;o;l;l;l;o;l;l;l|].(f)
+			|  32 -> [| o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l|].(f)
+			|  40 -> [| o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;o;l;o;o;o;l;o;o;o;l|].(f)
+			|  48 -> [| o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l;o;l;o;l;o;l|].(f)
+			|  56 -> [| o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l;o;l;l;o;l;l;l|].(f)
+			|  64 -> [| o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l|].(f)
+			|  80 -> [| o;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;o;l;o;l;o;l;o;l;o;l|].(f)
+			|  96 -> [| o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l;l|].(f)
+			| 112 -> [| o;o;l;o;l;o;l;o;o;l;o;l;o;l;o;o;l;o;l;o;l;o;o;l;o;l;o;l;o;o;l;o;l;o;l;o;o;l;o;l;o;l;o;o;l;o;l;o;l|].(f)
+			| 128 -> [| o;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;l;l;l|].(f)
+			| 144 -> [| o;o;l;o;l;o;o;l;o;l;o;o;l;o;l;o;o;l;o;l;o;o;l;o;l;o;l;o;o;l;o;l;o;o;l;o;l;o;o;l;o;l;o;o;l;o;l;o;l|].(f)
+			| 160 -> [| o;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l;o;l;l;l;l;l;l;l;l;l|].(f)
+			|  _  -> invalid_arg "padded_frame invalid bitrate"
+		)
+		| S48000 -> (fun _ _ -> false)
+		| S32000 -> (fun _ _ -> false)
+		| S24000 -> (fun _ _ -> false)
+		| S16000 -> (fun _ _ -> false)
+		| S12000 -> (fun _ _ -> false)
+		|  S8000 -> (fun _ _ -> false)
 ;;
-**)
+
 

@@ -1652,6 +1652,7 @@ let htB = [|
 	((1,1,1,1), 4, 0b0000);
 |]
 
+(*
 let make_huffman_tree ht len =
 	if ht = [||] then (
 		[||]
@@ -1705,9 +1706,10 @@ let make_huffman_tree ht len =
 		Array.map convert_to_onemany out_array
 	)
 ;;
-
+*)
 
 (*This is the safe version of the huffman_decode function. It is not useful because there is no MP3 Huffman table with >30 bits per word*)
+(*
 let huffman_decode_safe (r_str, r_at) ht bits =
 	let rec search_table (r_str_now, r_at_now) ht_now = (
 		let (first_bits, (r_str2, r_at2)) = read_bits_overflow (r_str_now, r_at_now) bits in
@@ -1721,7 +1723,9 @@ let huffman_decode_safe (r_str, r_at) ht bits =
 	) in
 	search_table (r_str, r_at) ht
 ;;
+*)
 
+(*
 let huffman_decode (r_str, r_at) ht bits =
 
 	let rec search_table (r_str_now, r_at_now) ht_now = (
@@ -1739,7 +1743,6 @@ let huffman_decode (r_str, r_at) ht bits =
 	search_table (r_str, r_at) ht
 ;;
 
-
 let huffman_decode_ptrref s ht bits =
 	let rec search_table ht_now =
 		let first_bits = Ptr.Ref.get_seq_fast_overflow s bits in
@@ -1755,15 +1758,15 @@ let huffman_decode_ptrref s ht bits =
 	in
 	search_table ht
 ;;
+*)
 
 
-
-let global_ht_bits = 8;;
-let global_ht = Array.map (fun x -> make_huffman_tree x global_ht_bits) [| ht0; ht1; ht2; ht3; (**)htX; ht5; ht6; ht7; ht8; ht9; ht10; ht11; ht12; ht13; (**)htX; ht15; ht16; ht17; ht18; ht19; ht20; ht21; ht22; ht23; ht24; ht25; ht26; ht27; ht28; ht29; ht30; ht31 |];;
+(*let global_ht_bits = 8;;*)
+(*let global_ht = Array.map (fun x -> make_huffman_tree x global_ht_bits) [| ht0; ht1; ht2; ht3; (**)htX; ht5; ht6; ht7; ht8; ht9; ht10; ht11; ht12; ht13; (**)htX; ht15; ht16; ht17; ht18; ht19; ht20; ht21; ht22; ht23; ht24; ht25; ht26; ht27; ht28; ht29; ht30; ht31 |];;*)
 let global_ht_linbits = [| 0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;1;2;3;4;6;8;10;13;4;5;6;7;8;9;11;13 |];;
 
-let global_ht_count1_bits = 6;;
-let global_ht_count1 = Array.map (fun x -> make_huffman_tree x global_ht_count1_bits) [| htA; htB |];;
+(*let global_ht_count1_bits = 6;;*)
+(*let global_ht_count1 = Array.map (fun x -> make_huffman_tree x global_ht_count1_bits) [| htA; htB |];;*)
 
 (**
 (* PRINT STUFF *)
@@ -1923,72 +1926,6 @@ let make_1bit_huffman_encode_table ht =
 let global_ht_encode = Array.map (fun x -> make_4bit_huffman_encode_table x) [| ht0; ht1; ht2; ht3; (**)htX; ht5; ht6; ht7; ht8; ht9; ht10; ht11; ht12; ht13; (**)htX; ht15; ht16; ht17; ht18; ht19; ht20; ht21; ht22; ht23; ht24; ht25; ht26; ht27; ht28; ht29; ht30; ht31 |];;
 let global_ht_encode_count1 = Array.map (fun x -> make_1bit_huffman_encode_table x) [| htA; htB |];;
 
-
-(* The first element of the tuple is the maximum value for the portion to be encoded *)
-(* The second element is which Huffman tables to look at *)
-let huffman_tables_from_lengths = [
-	(0,    [| 0 |]);
-	(1,    [| 1;3 |]);
-	(2,    [| 2;3;6;8;11 |]);
-	(3,    [| 5;6;7;8;9;11;12 |]);
-	(4,    [| 7;8;9;11;12;13;15 |]);
-	(5,    [| 7;8;9;11;12;13;15;16 |]);
-	(7,    [| 10;11;12;13;15;16;24 |]);
-	(15,   [| 13;15;16;24 |]);
-	(16,   [| 16;24 |]);
-	(18,   [| 17;24 |]);
-	(22,   [| 18;24 |]);
-	(30,   [| 19;24 |]);
-	(46,   [| 20;25 |]);
-	(78,   [| 20;26 |]);
-	(142,  [| 21;27 |]);
-	(270,  [| 21;28 |]);
-	(526,  [| 22;29 |]);
-	(1038, [| 22;30 |]);
-	(2062, [| 23;30 |]);
-	(8206, [| 23;31 |]);
-];;
-
-(* This is similar to huffman_tables_from_lengths, but it is indexed by the max quantizer of ALL bands *)
-(* *)
-let start_huffman_possibilities = [|
-	[| 0 |]; (* max is 0 *)
-	[| 0;1;3 |]; (* max is 1 *)
-	[| 0;1;2;3;6;8;11 |]; (* max is 2 *)
-	[| 0;1;2;3;5;6;7;8;9;11;12 |]; (* etc. *)
-	[| 0;1;2;3;5;6;7;8;9;11;12;13;15 |];
-	[| 0;1;2;3;5;6;7;8;9;11;12;13;15;16 |];
-|];;
-let all_start_huffman_possibilities = [| 0;1;2;3;5;6;7;8;9;10;11;12;13;15;16;17;18;19;20;21;22;23;24;25;26;27;28;29;30;31 |];;
-
-
-(* This tells which table to start looking on; every table less than this will not fit all the quants *)
-(* 0  1  2  3  5  6  7  8  9 10 11 12 13 15 *)
-(* 0  1  2  2  3  3  5  5  5  7  7  7 15 15 *)
-let possible_huffman_tables_from_lengths = [
-	(0, 0);
-	(1, 1);
-	(2, 2);
-	(3, 5);
-	(5, 7);
-	(7, 11);
-	(15,13);
-];;
-
-let max_quant_per_huffman_table = [|
-	0;1;2;2;-1;3;3;5;5;5;7;7;7;15;-1;15;16;18;22;30;78;270;1038;8206;30;46;78;142;270;526;2062;8206
-|];;
-
-
-(*
-Some tables are definitely better than others if the quantizer is in the right range.
-If no quantizer is larger than the number on the left, only check the tables on the right (ignore the xxx)
-0: [| ht0; xxx; xxx; xxx; xxx; xxx; xxx; xxx; xxx; xxx;  xxx;  xxx;  xxx;  xxx;  xxx;  xxx |]
-1: [| ht0; ht1; xxx; ht3; xxx; ht6; xxx; ht8; xxx; xxx;  xxx;  xxx;  xxx;  xxx;  xxx;  xxx |]
-2: [| ht0; ht1; ht2; ht3; xxx; ht6; xxx; ht8; ht9; xxx; ht11; ht12;  xxx; ht15;  xxx;  xxx |]
-3: [| ht0; ht1; ht2; ht3; ht5; ht6; ht7; ht8; ht9; xxx; ht11; ht12;  xxx;  xxx;  xxx;  xxx |]
-5: [| ht0; ht1; ht2; ht3; ht5; ht6; ht7; ht8; ht9; xxx; ht11; ht12; ht13; ht15; ht16; ht24 |]
-*)
 
 
 (* How long is every value encoded for each table? *)
