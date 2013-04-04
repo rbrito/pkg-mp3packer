@@ -21,25 +21,25 @@ open Mp3types;;
 open Pack;;
 
 
-let header_of_ptrref debug r =
+let header_of_ptrref p r =
 	if Ptr.Ref.length r < 4 then None else (
 		try
 			let b = Ptr.Ref.get_bits r in
-			if b 0 11 <> 0x7FF then (if debug then printf " SYNC'S WRONG\n"; raise Not_found);
+			if b 0 11 <> 0x7FF then (p [Str " SYNC'S WRONG"]; raise Not_found);
 
 			let id_index = b 11 2 in
-			if id_index = 1 then (if debug then printf " ID'S WRONG\n"; raise Not_found);
+			if id_index = 1 then (p [Str " ID'S WRONG"]; raise Not_found);
 			let id = mpeg_index.(id_index) in
 
-			if b 13 2 <> 1 then (if debug then printf " LAYER'S NOT 3\n"; raise Not_found);
+			if b 13 2 <> 1 then (p [Str " LAYER'S NOT 3"]; raise Not_found);
 
 			let crc = (b 15 1 = 0) in
 
 			let (bitrate, samplerate) =
 				let bitrate_index = b 16 4 in
 				let samplerate_index = b 20 2 in
-				if bitrate_index = 0 || bitrate_index = 15 then (if debug then printf " INVALID BITRATE\n"; raise Not_found);
-				if samplerate_index = 3 then (if debug then printf " INVALID SAMPLERATE\n"; raise Not_found);
+				if bitrate_index = 0 || bitrate_index = 15 then (p [Str " INVALID BITRATE"]; raise Not_found);
+				if samplerate_index = 3 then (p [Str " INVALID SAMPLERATE"]; raise Not_found);
 				match id with
 				| MPEG1  -> ([| 0;32;40;48;56;64;80;96;112;128;160;192;224;256;320 |].(bitrate_index), [| S44100;S48000;S32000 |].(samplerate_index))
 				| MPEG2  -> ([| 0; 8;16;24;32;40;48;56; 64; 80; 96;112;128;144;160 |].(bitrate_index), [| S22050;S24000;S16000 |].(samplerate_index))
@@ -181,9 +181,26 @@ let side_info_of_if f = (
 	)
 );;
 
+let get_current_crc header side_raw =
+	if header.header_crc then (
+		let side_bytes = match (header.header_id, header.header_channel_mode) with
+			| (MPEG1, ChannelMono) -> 17
+			| (MPEG1, _) -> 32
+			| (_, ChannelMono) -> 9
+			| (_, _) -> 17
+		in
+		let validate_this = Ptr.Ref.append (Ptr.Ref.sub header.header_raw 2 2) side_raw in
+		Crc.mp3_create_ptrref validate_this 0xFFFF
+	) else (
+		(* This is always an invalid CRC *)
+		-1
+	)
+;;
 
-class virtual virt_mp3read ?(debug=false)(* in_file*) =
+
+class virtual virt_mp3read (*?(debug=false)*)(* in_file*) =
 	object(o)
+		method private virtual p : p_type list -> unit
 
 		val mutable req = {
 			req_id           = Req_equal;
@@ -224,7 +241,7 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 (*		method virtual unix_handle : Unix.file_descr (* There should be a better way to do this *)*)
 
 		(* Take a Ptr.Ref.t and return Some xyz if it's a valid header string, None otherwise *)
-		method header_of_ptrref = header_of_ptrref debug
+		method header_of_ptrref = header_of_ptrref o#p
 (*
 		method header_of_ptrref r = (
 			if Ptr.Ref.length r < 4 then None else (
@@ -282,22 +299,39 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 		method get_frame_here reqs = (
 			let start_pos = o#pos in
 			let return_none () = (o#seek start_pos; Fp_none) in
-			if debug then printf "get_frame_here at %d\n" start_pos;
+			o#p [Str "get_frame_here at "; Int start_pos];
 			try
 (*				let header_string = String.create 4 in*)
 				let header_ptrref = (try
 					o#read_ptrref 4
 				with
-					End_of_file -> (if debug then printf "Got EOF reading frame header\n"; raise Not_found)
+					End_of_file -> (o#p [Str "Got EOF reading frame header"]; raise Not_found)
 				) in
-				if debug then printf " Got bytes %s\n" (Ptr.Ref.to_HEX header_ptrref);
+				o#p [Str " Got bytes "; Ptrref header_ptrref];
 				match o#header_of_ptrref header_ptrref with
 				| None -> (
-					if debug then printf " SYNC ERROR AT %d\n" (o#pos - 4);
+					o#p [Str " SYNC ERROR AT "; Int (o#pos - 4)];
 					Fp_none
 				)
 				| Some header -> (
 					(* Now match the requirements *)
+					let stringify_list str_fun l f = List.iter (fun x -> f (Str " "); f (Str (str_fun x))) l in
+					let found_match = match reqs with
+						| {req_id           = Req_matches x} when not (List.mem header.header_id x)           -> (o#p [Str " ID ";           Str (string_of_mpeg header.header_id);              Str " is not in ["; Fun (stringify_list string_of_mpeg x);                                  Str " ]"]; false)
+						| {req_crc          = Req_matches x} when not (List.mem header.header_crc x)          -> (o#p [Str " CRC ";          Bool header.header_crc;                             Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
+						| {req_bitrate      = Req_matches x} when not (List.mem header.header_bitrate x)      -> (o#p [Str " Bitrate ";      Int header.header_bitrate;                          Str " is not in ["; Fun (stringify_list string_of_int  x);                                  Str " ]"]; false)
+						| {req_samplerate   = Req_matches x} when not (List.mem header.header_samplerate x)   -> (o#p [Str " Samplerate ";   Int (int_of_samplerate header.header_samplerate);   Str " is not in ["; Fun (stringify_list (fun n -> string_of_int @@ int_of_samplerate n) x); Str " ]"]; false)
+						| {req_padding      = Req_matches x} when not (List.mem header.header_padding x)      -> (o#p [Str " Padding ";      Bool header.header_padding;                         Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
+						| {req_private      = Req_matches x} when not (List.mem header.header_private x)      -> (o#p [Str " Private ";      Bool header.header_private;                         Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
+						| {req_channel_mode = Req_matches x} when not (List.mem header.header_channel_mode x) -> (o#p [Str " Channel mode "; Str (string_of_channel header.header_channel_mode); Str " is not in ["; Fun (stringify_list string_of_channel x);                               Str " ]"]; false)
+						| {req_ms           = Req_matches x} when not (List.mem header.header_ms x)           -> (o#p [Str " MS ";           Bool header.header_ms;                              Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
+						| {req_is           = Req_matches x} when not (List.mem header.header_is x)           -> (o#p [Str " IS ";           Bool header.header_is;                              Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
+						| {req_copyright    = Req_matches x} when not (List.mem header.header_copyright x)    -> (o#p [Str " Copyright ";    Bool header.header_copyright;                       Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
+						| {req_original     = Req_matches x} when not (List.mem header.header_original x)     -> (o#p [Str " Original ";     Bool header.header_original;                        Str " is not in ["; Fun (stringify_list string_of_bool x);                                  Str " ]"]; false)
+						| {req_emphasis     = Req_matches x} when not (List.mem header.header_emphasis x)     -> (o#p [Str " Emphasis ";     Str (string_of_emphasis header.header_emphasis);    Str " is not in ["; Fun (stringify_list string_of_emphasis x);                              Str " ]"]; false)
+						| _ -> true
+					in
+(*
 					let found_match = match reqs with
 						| {req_id           = Req_matches x} when not (List.mem header.header_id x)           -> (if debug then printf " ID %s is not in [%s ]\n"           (string_of_mpeg header.header_id)              (List.fold_left (fun s n -> s ^ " " ^ (string_of_mpeg     n)) "" x); false)
 						| {req_crc          = Req_matches x} when not (List.mem header.header_crc x)          -> (if debug then printf " CRC %B is not in [%s ]\n"          header.header_crc                              (List.fold_left (fun s n -> s ^ " " ^ (string_of_bool     n)) "" x); false)
@@ -313,6 +347,7 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 						| {req_emphasis     = Req_matches x} when not (List.mem header.header_emphasis x)     -> (if debug then printf " Emphasis %s is not in [%s ]\n"     (string_of_emphasis header.header_emphasis)    (List.fold_left (fun s n -> s ^ " " ^ (string_of_emphasis n)) "" x); false)
 						| _ -> true
 					in
+*)
 					if found_match then (
 						let frame_length = frame_length_of_header header in
 						let side_info_size = match (header.header_id, header.header_channel_mode) with
@@ -330,18 +365,33 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 *)
 						let after_header = o#read_ptrref (frame_length - 4) in
 						let frame = Ptr.Ref.append header_ptrref after_header in
+						o#p [Str "Frame ptr ref:"];
+						o#p [Str " "; Ptrref frame];
 						let frame_string = Ptr.Ref.to_string frame in
 
+						let side_raw = Ptr.Ref.sub frame (if header.header_crc then 6 else 4) side_info_size in
 
-						if debug then printf " Found requested frame from %d to %d\n" start_pos o#pos;
+						let crc_ok = if header.header_crc then (
+							let target_crc = Ptr.Ref.get_bits frame 32 16 in
+							let actual_crc = get_current_crc header side_raw in
+							o#p [Str " Frame CRCs: written is "; Hex (4,target_crc); Str ", real is "; Hex (4,actual_crc)];
+							target_crc = actual_crc
+						) else (
+							true
+						) in
+						if not crc_ok then o#p [Str "  FRAME CRC IS INVALID"];
+
+						o#p [Str " Found requested frame from "; Int start_pos; Str " to "; Int o#pos];
 
 						Fp_some {
+							if_raw          = frame;
 							if_header       = header;
 (*							if_side_string  = Ptr.Ref.to_string (Ptr.Ref.sub frame (if header.header_crc then 6 else 4) side_info_size);*)
-							if_side_raw     = Ptr.Ref.sub frame (if header.header_crc then 6 else 4) side_info_size;
+							if_side_raw     = side_raw;
 (*							if_data_string  = String.sub frame_string data_raw_pos (frame_length - data_raw_pos);*)
 							if_data_raw     = Ptr.Ref.sub frame data_raw_pos (frame_length - data_raw_pos);
-							if_frame_string = frame_string;
+(*							if_frame_string = frame_string;*)
+							if_crc_ok       = crc_ok;
 							if_xing         = None;
 						}
 					) else (
@@ -351,8 +401,8 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 					)
 				)
 			with
-			| End_of_file -> (if debug then printf " HIT THE EOF\n"; o#seek start_pos; Fp_none)
-			| Not_found -> (if debug then printf " HIT THE EOF when reading header\n"; o#seek start_pos; Fp_eof)
+			| End_of_file -> (o#p [Str " HIT THE EOF"]; o#seek start_pos; Fp_none)
+			| Not_found -> (o#p [Str " HIT THE EOF when reading header"]; o#seek start_pos; Fp_eof)
 		)
 
 		(* This takes some requirements and returns (new_reqs, first_frame, (started_at, found_at) option) option *)
@@ -360,7 +410,7 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 
 			let start_pos = o#pos in
 
-			if debug then printf "resync_here at %d\n" start_pos;
+			o#p [Str "resync_here at "; Int start_pos];
 
 			let rec find_frame_and_update_reqs more_frames reqs = (
 				let frame_perhaps = o#get_frame_here reqs in
@@ -386,7 +436,7 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 						req_original     = (match reqs.req_original     with Req_equal -> Req_matches [f.if_header.header_original    ] | x -> x);
 						req_emphasis     = (match reqs.req_emphasis     with Req_equal -> Req_matches [f.if_header.header_emphasis    ] | x -> x);
 					} in
-					if debug then printf " resync_here found frame %d here\n" (num_frames - more_frames);
+					o#p [Str " resync_here found frame "; Int (num_frames - more_frames); Str " here"];
 
 					if more_frames > 1 then (
 						(* Get more frames *)
@@ -417,12 +467,10 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 
 			(try
 				let (r,f,(wanted,found)) = find_sync_rec 0 in
-				if debug then (
-					if wanted = found then (
-						printf "Found %d frames starting from %d\n" num_frames wanted
-					) else (
-						printf "Found %d frames starting from %d (resync needed from %d)\n" num_frames found wanted
-					)
+				if wanted = found then (
+					o#p [Str "Found "; Int num_frames; Str " frames starting from "; Int wanted];
+				) else (
+					o#p [Str "Found "; Int num_frames; Str " frames starting from "; Int found; Str " (resync needed from "; Int wanted; Str ")"]
 				);
 				Some (r,f,(wanted,found))
 			with
@@ -453,7 +501,7 @@ class virtual virt_mp3read ?(debug=false)(* in_file*) =
 			match frame_info_perhaps with
 			| None -> raise End_of_file
 			| Some (req2, f, resync_needed) -> (
-
+(*
 if debug then (
 	let h = f.if_header in
 	printf " \"%s\"\n" (Ptr.Ref.to_HEX h.header_raw);
@@ -471,41 +519,53 @@ if debug then (
 	printf "  Emphasis: %s\n" (string_of_emphasis h.header_emphasis);
 	printf " Side:  \"%s\"\n" (Ptr.Ref.to_HEX f.if_side_raw);
 	printf " Data:  \"%s\"\n" (Ptr.Ref.to_HEX f.if_data_raw);
-	printf " Frame: \"%s\"\n" (to_hex f.if_frame_string);
+	printf " Frame: \"%s\"\n" (Ptr.Ref.to_HEX f.if_raw);
 );
-
+*)
 				(* Update the frame bounds *)
 				first_frame_start <- min first_frame_start (snd resync_needed);
-				last_frame_end <- max last_frame_end ((snd resync_needed) + String.length f.if_frame_string - 1);
+				last_frame_end <- max last_frame_end ((snd resync_needed) + Ptr.Ref.length f.if_raw - 1);
 
 				if lame_search then (
 					(* Convert the frame into an XING frame, if possible *)
-					if debug then printf "Searching for XING/LAME tag\n";
+					o#p [Str "Searching for XING/LAME tag"];
 					(try
-						let rec count_zeros frame_raw now num = (
+(*
+						let rec count_zeros_string frame_raw now num = (
 							if now >= String.length frame_raw || frame_raw.[now] <> '\x00'
 								then num
-								else count_zeros frame_raw (succ now) (succ num)
+								else count_zeros_string frame_raw (succ now) (succ num)
 						) in
-						let num_zeros = count_zeros f.if_frame_string 6 0 in
-						if num_zeros < 7 || num_zeros > 32 then (if debug then printf " XING search found %d zeros (not between 7 and 32)\n" num_zeros; raise Not_found);
-						if num_zeros + 10 > String.length f.if_frame_string then (if debug then printf " XING search found %d bytes in frame; not long enough for XING\n" (String.length f.if_frame_string); raise Not_found); (* Frame is too short to have an XING tag *)
-						let tag_type = String.sub f.if_frame_string (num_zeros + 6) 4 in
-						if tag_type <> "Xing" && tag_type <> "Info" then (if debug then printf " XING search found unknown tag type %S\n" tag_type; raise Not_found);
+*)
+						let rec count_zeros frame_raw now num =
+							if now >= Ptr.Ref.length frame_raw || Ptr.Ref.ref_get_byte frame_raw now <> 0 then (
+								num
+							) else (
+								count_zeros frame_raw (succ now) (succ num)
+							)
+						in
+						let num_zeros = count_zeros f.if_raw 6 0 in
+						if num_zeros < 7 || num_zeros > 32 then (o#p [Str " XING search found "; Int num_zeros; Str " zeros (not between 7 and 32)"]; raise Not_found);
+						if num_zeros + 10 > Ptr.Ref.length f.if_raw then (o#p [Str " XING search found "; Int (Ptr.Ref.length f.if_raw); Str " bytes in frame; not long enough for XING"]; raise Not_found); (* Frame is too short to have an XING tag *)
+(*						let tag_type = String.sub f.if_frame_string (num_zeros + 6) 4 in*)
+						let tag_type = Ptr.Ref.to_string (Ptr.Ref.sub f.if_raw (num_zeros + 6) 4) in
+						if tag_type <> "Xing" && tag_type <> "Info" then (o#p [Str " XING search found unknown tag type "; StrS tag_type]; raise Not_found);
 
-						let tag_guts = String.sub f.if_frame_string (num_zeros + 10) (String.length f.if_frame_string - num_zeros - 10) in
+						(* TODO: make this less dependent on strings *)
+						let tag_guts = Ptr.Ref.to_string (Ptr.Ref.sub f.if_raw (num_zeros + 10) (Ptr.Ref.length f.if_raw - num_zeros - 10)) in
+(*						let tag_guts = String.sub f.if_frame_string (num_zeros + 10) (Ptr.Ref.length f.if_raw - num_zeros - 10) in*)
 
 						let tag_pos_ref = ref 4 in (* Where we are in the tag. Pretend that the flags have already been read (0 is right AFTER "Xing" or "Info") *)
 
-						if String.sub tag_guts 0 3 <> "\x00\x00\x00" then (if debug then printf " XING search flags not padded with zeros\n"; raise Not_found);
+						if String.sub tag_guts 0 3 <> "\x00\x00\x00" then (o#p [Str " XING search flags not padded with zeros"]; raise Not_found);
 
 						(* Read XING flags *)
 						let (flag_frames, flag_bytes, flag_toc, flag_quality) = (
 							let flags = Char.code tag_guts.[3] in
-							if flags > 15 then (if debug then printf " XING search found flags > 15\n"; raise Not_found);
+							if flags > 15 then (o#p [Str " XING search found flags > 15"]; raise Not_found);
 							let flag_frames = (
 								if flags land 1 = 1 then (
-									if !tag_pos_ref + 4 > String.length tag_guts then (if debug then printf " XING search finds frame flag, but not enough room for them\n"; raise Not_found);
+									if !tag_pos_ref + 4 > String.length tag_guts then (o#p [Str " XING search finds frame flag, but not enough room for them"]; raise Not_found);
 									let p = unpackN tag_guts !tag_pos_ref in
 									tag_pos_ref := !tag_pos_ref + 4;
 									Some p
@@ -513,7 +573,7 @@ if debug then (
 							) in
 							let flag_bytes = (
 								if flags land 2 = 2 then (
-									if !tag_pos_ref + 4 > String.length tag_guts then (if debug then printf " XING search finds byte flag, but not enough room for them\n"; raise Not_found);
+									if !tag_pos_ref + 4 > String.length tag_guts then (o#p [Str " XING search finds byte flag, but not enough room for them"]; raise Not_found);
 									let p = unpackN tag_guts !tag_pos_ref in
 									tag_pos_ref := !tag_pos_ref + 4;
 									Some p
@@ -521,7 +581,7 @@ if debug then (
 							) in
 							let flag_toc = (
 								if flags land 4 = 4 then (
-									if !tag_pos_ref + 100 > String.length tag_guts then (if debug then printf " XING search finds TOC, but not enough room for it\n"; raise Not_found);
+									if !tag_pos_ref + 100 > String.length tag_guts then (o#p [Str " XING search finds TOC, but not enough room for it"]; raise Not_found);
 									let p = Array.init 100 (fun i -> Char.code tag_guts.[!tag_pos_ref + i]) in
 									tag_pos_ref := !tag_pos_ref + 100;
 									Some p
@@ -529,7 +589,7 @@ if debug then (
 							) in
 							let flag_quality = (
 								if flags land 8 = 8 then (
-									if !tag_pos_ref + 4 > String.length tag_guts then (if debug then printf " XING search finds quality flag, but not enough room for it\n"; raise Not_found);
+									if !tag_pos_ref + 4 > String.length tag_guts then (o#p [Str " XING search finds quality flag, but not enough room for it"]; raise Not_found);
 									let p = unpackN tag_guts !tag_pos_ref in
 									tag_pos_ref := !tag_pos_ref + 4;
 									Some p
@@ -545,7 +605,7 @@ if debug then (
 						let (lame_perhaps, encoder) = (
 							if !tag_pos_ref + 20 > String.length tag_guts then (
 								(* Oops. Not enough room for the encoder *)
-								if debug then printf " XING search has not enough room for encoder; not LAME but still XING\n";
+								o#p [Str " XING search has not enough room for encoder; not LAME but still XING"];
 								(None, "")
 							) else (
 								(* There's enough room for the encoder *)
@@ -553,18 +613,19 @@ if debug then (
 
 								(* Is there enough room for LAME? *)
 								if !tag_pos_ref + 36 > String.length tag_guts then (
-									if debug then printf " XING search sees not enough room for LAME; returning XING\n";
+									o#p [Str " XING search sees not enough room for LAME; returning XING"];
 									(None, encoder_20)
 								) else (
 									let lame_part = String.sub tag_guts !tag_pos_ref 36 in (* This starts from the beginning of the encoder string and goes to the tag CRC *)
 									let crc_ok = (
 										if lame_part.[20] = '\x00' && String.sub lame_part 24 12 = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" && String.sub lame_part 21 3 <> "\x00\x00\x00" then (
-											if debug then printf " XING search found LAME frame with only offset info\n";
+											o#p [Str " XING search found LAME frame with only offset info"];
 											true
 										) else (
 											let tag_crc = unpackn lame_part 34 in
-											let real_crc = Crc.create (String.sub f.if_frame_string 0 (num_zeros + 10 + from_name + 34)) 0 in
-											if debug then printf " Written CRC is %04X, real CRC is %04X\n" tag_crc real_crc;
+(*											let real_crc = Crc.lame_create (String.sub f.if_frame_string 0 (num_zeros + 10 + from_name + 34)) 0 in*)
+											let real_crc = Crc.lame_create_ptrref (Ptr.Ref.sub f.if_raw 0 (num_zeros + 10 + from_name + 34)) 0 in
+											o#p [Str " Written CRC is "; Hex (4,tag_crc); Str ", real CRC is "; Hex (4,real_crc)];
 											tag_crc = real_crc
 										)
 									) in
@@ -616,6 +677,7 @@ if debug then (
 							xingLame = lame_perhaps;
 						} in
 
+(*
 						if debug then (
 							printf "XING FOUND:\n";
 							printf " Raw tag:    %S\n" xing.xingRawTag;
@@ -654,6 +716,7 @@ if debug then (
 								printf "  Music CRC:      %d\n" l.lameMusicCRC;
 							)
 						);
+*)
 						f.if_xing <- Some xing;
 						(req2, f, resync_needed)
 					with
@@ -685,9 +748,10 @@ class mp3read_new ?debug in_file =
 ;;
 *)
 
-class mp3read_unix ?debug in_file =
+class mp3read_unix print_fun in_file =
 	object(o)
-		inherit virt_mp3read ?debug:debug
+		inherit virt_mp3read (*?debug:debug*)
+		method private p = print_fun
 
 		val handle = Unicode.openfile_utf8 in_file [Unix.O_RDONLY] 0o600
 		method seek i = ignore (Unix.lseek handle i Unix.SEEK_SET)
@@ -718,9 +782,10 @@ class mp3read_unix ?debug in_file =
 ;;
 
 
-class mp3read_ptr ?debug in_file =
+class mp3read_ptr print_fun in_file =
 	object(o)
-		inherit virt_mp3read ?debug:debug
+		inherit virt_mp3read (*?debug:debug*)
+		method private p = print_fun
 
 		val handle = Unicode.openfile_utf8 in_file [Unix.O_RDONLY] 0o600
 		val mutable ptr = Ptr.make 0 0
@@ -768,9 +833,10 @@ class mp3read_ptr ?debug in_file =
 ;;
 
 
-class mp3read_ptr_only ?debug ptr len =
+class mp3read_ptr_only print_fun ptr len =
 	object(o)
-		inherit virt_mp3read ?debug:debug
+		inherit virt_mp3read (*?debug:debug*)
+		method private p = print_fun
 
 		val mutable pos = 0
 
