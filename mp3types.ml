@@ -39,6 +39,10 @@ let trap_exception_2 a b c =
 		e -> Error e
 ;;
 
+let make_exception = function
+	| Normal x -> x
+	| Error e -> raise e
+;;
 
 let to_hex s =
   let result = String.create (2 * String.length s) in
@@ -60,6 +64,45 @@ let to_bin =
 		result
 	)
 ;;
+
+
+
+(* STUFF FOR THE LIST-BASED PRINTING FUNCTIONS *)
+type p_type =
+	| Bool of bool
+	| Int of int
+	| IntN of int * int (* width, int *)
+	| Hex of int * int (* width, int (always filled with 0) *)
+	| Float of float
+	| FloatN of int * float (* width, int -- like "%*f" *)
+	| Float_N of int * float (* Equivalent to "%.*f" *)
+	| FloatN_N of int * int * float (* "%*.*f" *)
+	| Str of string
+	| StrN of int * string
+	| StrS of string (* Escaped like %S *)
+	| StrNS of int * string
+	| Char of char
+	| Spaces of int (* Just some number of spaces *)
+	| Ptr of Ptr.t
+	| Subptr of Ptr.t * int * int (* ptr, offset, length *)
+	| Ptrref of Ptr.Ref.ref_t
+	| Fun of ((p_type -> unit) -> unit)
+	| List of p_type list
+;;
+
+
+(* Small, handy functions *)
+
+(* Some functions depend on these identities *)
+assert (max_int / 2 + 1 = 1 lsl (Sys.word_size - 3));;
+assert (min_int = 1 lsl (Sys.word_size - 2));;
+
+(* if x = 0 then 0 else 1 *)
+let one_if_not_0 x = (x lor ~-x) lsr (Sys.word_size - 2);;
+(* if x = 0 then 0 else -1 *)
+let neg_one_if_not_0 x = (x lor ~-x) asr (Sys.word_size - 2);;
+
+
 
 
 (* File name functions *)
@@ -166,19 +209,6 @@ type xingTag_t = {
 	xingLame : lameTag_t option;
 };;
 
-type sideInfo_t = {
-	sideRaw : string; (* The exact value of the side info *)
-	sideDataOffset : int; (* How much of the bit reservoir is used *)
-	sideDataBits : int; (* How many bits are in this frame *)
-};;
-(*
-type frameContents_t = {
-	frameSide : sideInfo_t;
-	frameData : string;
-};;
-*)
-(*type frameType_t = FrameXing of xingTag_t | FrameNormal of frameContents_t;;*)
-
 type channel_t = ChannelStereo | ChannelJoint | ChannelDual | ChannelMono;;
 let channel_index = [| ChannelStereo ; ChannelJoint ; ChannelDual ; ChannelMono |];;
 let string_of_channel = function
@@ -230,31 +260,6 @@ let float_of_samplerate = function
 | S11025 -> 11025.
 |  S8000 ->  8000.
 ;;
-
-(*
-type common_t = { (* Store the things which are common to all the frames in a file *)
-	common_id : mpeg_t;
-	common_bitrate_index : int array;
-	common_samplerate_index : samplerate_t array;
-	common_samplerate : samplerate_t;
-(*	mutable common_crc : bool;*)
-	common_channel_mode : channel_t;
-	common_copyright : bool;
-	common_original : bool;
-	common_emphasis : emphasis_t;
-	common_samples_per_frame : int;
-	common_side_info_size : int;
-	common_bspfk : float; (* Byte seconds per frame kilobit (surprisingly useful) *)
-	common_unpadded_frame_length : int -> int; (* Takes a bitrate and returns the total number of bytes in it *)
-};;
-type frame_t = {
-	frameHeader : header_t;
-	frameXing : xingTag_t option;
-	frameSide : sideInfo_t;
-(*	frameSilent : bool;*)
-	frameData : string;
-};;
-*)
 
 (**********************************)
 (* NEW FOR MP3READ AS OF 20070326 *)
@@ -313,12 +318,14 @@ let bitrate_index_of_id = function
 ;;
 
 type input_frame_t = {
+	if_raw : Ptr.Ref.ref_t;
 	if_header : header_t;
 (*	if_side_string : string;*)
 	if_side_raw : Ptr.Ref.ref_t;
 (*	if_data_string : string;*)
 	if_data_raw : Ptr.Ref.ref_t;
-	if_frame_string : string; (* Includes the entire frame (WITH header) *)
+(*	if_frame_string : string; (* Includes the entire frame (WITH header) *)*)
+	if_crc_ok : bool; (* Also true if the frame has no CRC *)
 	mutable if_xing : xingTag_t option; (* This is mutable so that read_next_frame can change it *)
 }
 
@@ -399,7 +406,7 @@ type process_set_t = SSE41 | Set_base;;
 
 
 (* NEW FOR THE WORKERS *)
-type queue_input_t = {
+type (*'a,'b*) queue_input_t = {
 	q_silent : bool;
 	q_debug_in : bool;
 	q_debug_queue : bool;
@@ -412,16 +419,78 @@ type queue_input_t = {
 	q_process_set : process_set_t;
 	q_zero_whole_bad_frame : bool;
 	q_minimize_bit_reservoir : bool;
-};;
 
+(*
+	q_recompress_fun : 'a -> 'b;
+	q_recompress_obj : ('a,'b) Threadpool.per_function;
+*)
+	q_print_in : p_type list -> unit;
+	q_print_queue : p_type list -> unit;
+	q_print_recompress : p_type list -> unit;
+};;
+(*
+type file_state_t = {
+	fs_mutex : Mutex.t; (* Everything under this should be protected by this mutex *)
+	mutable fs_freq_overflow_warn : bool;
+};;
+let new_file_state () = {
+	fs_mutex = Mutex.create ();
+	fs_freq_overflow_warn = true;
+};;
+*)
+class file_state =
+	object(o)
+
+		(* Everything under this is protected by this mutex *)
+		val m = Mutex.create ()
+		val mutable freq_warn = true
+		val mutable buffer_errors = 0
+		val mutable sync_errors = 0
+		val mutable crc_errors = 0
+		val mutable rehuff_errors = 0
+		method freq_warn = (
+			Mutex.lock m;
+			let got = freq_warn in
+			freq_warn <- false;
+			Mutex.unlock m;
+			got
+		)
+		method add_buffer_error = (
+			Mutex.lock m;
+			buffer_errors <- succ buffer_errors;
+			Mutex.unlock m;
+		)
+		method add_sync_error = (
+			Mutex.lock m;
+			sync_errors <- succ sync_errors;
+			Mutex.unlock m;
+		)
+		method add_crc_error = (
+			Mutex.lock m;
+			crc_errors <- succ crc_errors;
+			Mutex.unlock m;
+		)
+		method add_rehuff_error = (
+			Mutex.lock m;
+			rehuff_errors <- succ rehuff_errors;
+			Mutex.unlock m;
+		)
+		method get_errors = (
+			Mutex.lock m;
+			let ret = (buffer_errors, sync_errors, crc_errors, rehuff_errors) in
+			Mutex.unlock m;
+			ret
+		)
+	end
+;;
 
 type worker_file_t = {
 	worker_file_index : int;
 	worker_file_input : string;
 	worker_file_output: string;
 };;
-type worker_do_t = 
-	| Worker_queue of queue_input_t
+type (*'a,'b*) worker_do_t = 
+	| Worker_queue of (*'a,'b*) queue_input_t
 	| Worker_do of worker_file_t
 	| Worker_finish
 ;;
@@ -432,6 +501,7 @@ type worker_ok_file_t = {
 };;
 
 (* Exceptions are no good to transfer between processes, so make a more concrete type *)
+(*
 type worker_fail_exception_t =
 	| Worker_fail_end_of_file
 	| Worker_fail_invalid_argument of string
@@ -476,7 +546,7 @@ type worker_ret_t =
 	| Worker_skipped of int
 	| Worker_done
 ;;
-
+*)
 
 
 
@@ -574,6 +644,18 @@ let copy_file_times_by_name source target =
 	| Error e -> Error e
 ;;
 
+
+
+(* C PRINTING THINGS *)
+(*
+Callback.register "Buffer__add_char" Buffer.add_char;;
+external p_print_int_test : Buffer.t -> int -> unit = "p_print_int_test";;
+*)
+
+
+
+
+
 (* Weird padding stuff
 		Each CBR MP3 seems to have a cycle of padded and unpadded frames which lasts
 		49 frames. Some have a cycle that only lasts 7 frames, but this can be
@@ -631,3 +713,7 @@ let padded_frame samplerate bitrate frameno =
 
 	| _ -> false (* All other samplerates, as well as any invalid bitrates *)
 ;;
+
+
+
+

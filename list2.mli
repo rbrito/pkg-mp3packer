@@ -36,10 +36,16 @@ val rev_iteri : (int -> 'a -> 'b) -> 'a t -> unit
 val pop_last : 'a t -> 'a
 val take_last : 'a t -> 'a
 (** Take the last element out of the list and return it *)
+val pop_last_perhaps : 'a t -> 'a option
+val take_last_perhaps : 'a t -> 'a option
+(** Take the last element out of the list and return it, or return None *)
 
 val pop_first : 'a t -> 'a
 val take_first : 'a t -> 'a
 (** Take the first element out of the list and return it *)
+val pop_first_perhaps : 'a t -> 'a option
+val take_first_perhaps : 'a t -> 'a option
+(** Take the first element out of the list and return it, or return None *)
 
 val fold : ('a -> 'b -> 'a) -> 'a -> 'b t -> 'a
 (** [fold f i q] is the same as [(f ... (f (f i first) second) ... last)] *)

@@ -157,6 +157,28 @@ let pop_last q =
 ;;
 let take_last = pop_last;;
 
+(* I don't like exceptions! *)
+let pop_last_perhaps q =
+	if q.length = 0 then (
+		None
+	) else (
+		let old_tail = q.tail in
+		match old_tail.prev with
+		| None -> ( (* It's the only element in the list *)
+			clear q;
+			Some old_tail.value
+		)
+		| Some new_tail -> (
+			new_tail.next <- None;
+			old_tail.prev <- None; (* I don't think this is necessary, but I'll do it anyway *)
+			q.tail <- new_tail;
+			q.length <- pred q.length;
+			Some old_tail.value
+		)
+	)
+;;
+let take_last_perhaps = pop_last_perhaps;;
+
 
 let pop_first q =
 	if q.length = 0 then raise Empty;
@@ -175,6 +197,29 @@ let pop_first q =
 	)
 ;;
 let take_first = pop_first;;
+
+
+let pop_first_perhaps q =
+	if q.length = 0 then (
+		None
+	) else (
+		let old_head = q.head in
+		match old_head.next with
+		| None -> (
+			clear q;
+			Some old_head.value
+		)
+		| Some new_head -> (
+			new_head.prev <- None;
+			old_head.next <- None;
+			q.head <- new_head;
+			q.length <- pred q.length;
+			Some old_head.value
+		)
+	)
+;;
+let take_first_perhaps = pop_first_perhaps;;
+
 
 let fold f accu q =
 	if q.length = 0 then accu else (

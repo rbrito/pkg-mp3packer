@@ -306,7 +306,7 @@ let put_seq s num v =
 	while s.seq_now_bits >= 8 do
 		let shift_amount = s.seq_now_bits - 8 in
 		let write_mask = 0xFF lsl shift_amount in
-		let write_val = (s.seq_now_int land write_mask) lsr shift_amount in
+		let write_val = (s.seq_now_int(* land write_mask*)) lsr shift_amount in
 		put_8_of_int s.seq_ptr s.seq_now_byte write_val;
 		s.seq_now_int <- s.seq_now_int land (lnot write_mask);
 		s.seq_now_bits <- s.seq_now_bits - 8;
@@ -394,11 +394,6 @@ let to_HEX =
 module Ref =
 	struct
 
-		let rec list_append_elt a = function
-			| [] -> a :: []
-			| hd :: tl -> hd :: list_append_elt a tl
-		;;
-
 		type node_t = {
 			p : t;
 			off : int;
@@ -420,13 +415,30 @@ module Ref =
 (*		let mknew () = {lentot = 0; n = []};;*)
 		let null = {lentot = 0; n = []};;
 
+
+
+		let rec list_append_elt a = function
+			| [] -> a :: []
+			| hd :: tl -> hd :: list_append_elt a tl
+		;;
+
+		(* This has an integrated ptr-fuser so that if the two ptrs at the boundary are sequential it will combine them into one *)
+		(* It's just as non-tail-recursive as the "@" function *)
+		let rec list_append_list x y = match (x,y) with
+			| (x_hd :: [], y_hd :: y_tl) when x_hd.p == y_hd.p && x_hd.off + x_hd.len = y_hd.off -> {p = x_hd.p; off = x_hd.off; len = x_hd.len + y_hd.len} :: y_tl
+			| (x_hd :: x_tl, _) -> x_hd :: list_append_list x_tl y
+			| ([], _) -> y
+		;;
+
+
+
 		let append r1 r2 = {
 			lentot = r1.lentot + r2.lentot;
-			n = r1.n @ r2.n;
+			n = list_append_list r1.n r2.n;
 		};;
 		let append_list rs =
 			let rec flatten = function
-				| {n = n} :: tl -> n @ flatten tl
+				| {n = n} :: tl -> list_append_list n (flatten tl)
 				| [] -> []
 			in
 			{

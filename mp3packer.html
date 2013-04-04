@@ -51,10 +51,12 @@ Processes <code>in.mp3</code> according to <code>options</code> and saves the ou
   <dd>Strip non-MP3 data at the end of the file. Using this option will remove most tags and any incomplete last frames from the file.</dd>
   <dt><code>-z</code></dt>
   <dd>This option makes mp3packer partially decode the audio in the file, optimize the data, then recode it. This method stops decoding before any lossy transformations take place, and therefore <em>the <code>-z</code> switch is still completely lossless</em>. MP3 files have a number of different methods to compress the data, and most encoders only choose between a few of them. The <code>-z</code> switch will do a brute-force search for the most efficient compression setting. This guarantees that each frame is as small as it can get, but it takes <em>much</em> longer to repack.</dd>
+  <dt><code>--workers #</code></dt>
+  <dd>Set the number of threads to use for <code>-z</code> processing. These workers will run in parallel with the rest of the program. 0 is a valid number, and corresponds to synchronous processing. The default is a function of the number of processors/cores the program detects, and will likely change in different versions of the program.</dd>
   <dt><code>-a "-vbr"</code></dt>
   <dd>Specify the string to append to the file name if no output file name is given. If <code>mp3packer -a &quot;-food&quot; in.mp3</code> is given, the output will be named <code>in-food.mp3</code>. <code>&quot;-vbr&quot;</code> is the default.</dd>
   <dt><code>-A</code></dt>
-  <dd>Don't skip the files in a directory which already have the <code>-a</code> string appended. The default prevents files from being processed twice (giving names like file-vbr-vbr-vbr.mp3), but if you have changed settings to reprocess this may be useful.</dd>
+  <dd>Don't skip the files in a directory which already have the <code>-a</code> string appended. The default prevents files from being processed twice (giving names like filename-vbr-vbr-vbr.mp3), but if you have changed settings to reprocess this may be useful.</dd>
   <dt><code>-u</code></dt>
   <dd>
     Updates the input file, and stores a backup to the output file. So after <code>mp3packer -u process.mp3 backup.mp3</code>, the file <code>process.mp3</code> will contain the packed mp3, and <code>backup.mp3</code> will be the same as the original <code>process.mp3</code>. Note that if you don't specify an output file or change the <code>-a</code> option, the original will have <code>&quot;-vbr&quot;</code> appended to it, which may lead to confusion.</dd>
@@ -329,7 +331,9 @@ INFO:
 <p>Note that these options do not affect file size or compatibility at all. It will only change the internal layout of the data in the frames.</p>
 <h3><a name="changelog" id="changelog">Changelog:</a></h3>
 <dl>
-	<dt>2.01 (2012-07-15)</dt>
+	<dt>2.02 (2012-07-28)</dt>
+    <dd>Multi-threading is more efficient. <code>-z</code> processing can go 2-3x faster than 2.01 with quad-core processors.</dd>
+  <dt>2.01 (2012-07-15)</dt>
     <dd>Removed a debug line causing a file named pipe.bin to be created.</dd>
 	<dt>2.00 (2012-07-14)</dt>
     <dd>Re-made the <code>-z</code> processing to be multi-threaded and use SSE if available.</dd>

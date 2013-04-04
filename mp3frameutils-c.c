@@ -69,7 +69,7 @@ uint32 max_with_sub15(uint32 so_far, uint32 q1, uint32 q2) {
 }
 
 
-CAMLprim value mfu_find_best_config(
+CAMLprim value mfu_find_best_config_base(
 	value quant_bits_ptr,
 	value quant_bits_count1_char_ptr,
 	value scf_bands_ptr,

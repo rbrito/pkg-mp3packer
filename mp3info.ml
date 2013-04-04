@@ -23,9 +23,9 @@ open Pack;;
 (* Giving in to the imperative side of the Force *)
 let (+=) a b = (a := !a + b);;
 
-let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name =
+let do_info ?(only_bitrate=false) p ?(debug_info=false) in_name =
 (*	let t1 = Sys.time () in*)
-	let in_obj = new mp3read_unix ~debug:debug_in in_name in
+	let in_obj = new mp3read_unix p in_name in
 (*	let in_obj = new mp3read_ptr ~debug:debug_in in_name in*)
 	
 (*
@@ -103,12 +103,14 @@ let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name 
 	let frame_ref = ref first_real_frame in
 	let frame_sync_error_ref = ref (first_wanted_at <> first_got_at) in
 	let sync_errors_ref = ref 0 in
+	let crc_errors_ref = ref 0 in
 	let next_update_ref = ref 0 in
 	let next_update_percent_ref = ref 0 in
 	let file_length = in_obj#length in
 	(try (
 		while true do
 			if !frame_sync_error_ref then incr sync_errors_ref;
+			if not !frame_ref.if_crc_ok then incr crc_errors_ref;
 			if not only_bitrate && in_obj#pos > !next_update_ref then (
 				Printf.printf "\r%2d%% done on frame %d" !next_update_percent_ref !frame_inky_ref;
 				flush stdout;
@@ -136,7 +138,7 @@ let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name 
 			frame_sync_error_ref := next_wanted <> next_got;
 		done;
 		in_obj#close;
-		(0,0,0) (* This is never reached; it's just here to make the typechecker happy *)
+		assert false (* This is never reached; it's just here to make the typechecker happy *)
 	) with
 		| End_of_file -> (
 			Printf.printf "\r";
@@ -299,7 +301,7 @@ let do_info ?(only_bitrate=false) ?(debug_in=false) ?(debug_info=false) in_name 
 
 			flush stdout;
 
-			(0,!sync_errors_ref,0)
+			(0,!sync_errors_ref,!crc_errors_ref,0)
 		)
 	);
 ;;
