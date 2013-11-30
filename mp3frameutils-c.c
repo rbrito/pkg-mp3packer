@@ -1257,7 +1257,7 @@ CAMLprim value mfu_find_best_config_sse41(
 	value quant_raw_ptr,
 	value debug_val
 ) {
-	return mfu_find_best_config(quant_bits_ptr, quant_bits_count1_char_ptr, scf_bands_ptr, quant_raw_ptr, debug_val);
+	return mfu_find_best_config_sse41(quant_bits_ptr, quant_bits_count1_char_ptr, scf_bands_ptr, quant_raw_ptr, debug_val);
 }
 
 #endif // WIN32

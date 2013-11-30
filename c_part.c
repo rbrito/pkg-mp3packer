@@ -16,6 +16,7 @@
 #if defined(WIN32)
 #include <windows.h>
 #else
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #endif
@@ -186,7 +187,7 @@ CAMLprim value get_os_thread_self_id() {
 		out_val = win_alloc_handle(dup_handle);
 	}
 #else
-	out_val = Val_int(gettid());
+	out_val = Val_int(pthread_self());
 #endif
 	CAMLreturn(out_val);
 }

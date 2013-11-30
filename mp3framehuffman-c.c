@@ -334,7 +334,7 @@ static unsigned int get_bits_wordwise(seq_string_t *s, int num_bits) {
 	uint32 raw;
 	int_ptr = (uint32 *)s->byte_ptr;
 
-#if 1
+#if !defined __CYGWIN__
 	raw = _byteswap_ulong(*int_ptr) << s->bit_index;
 #else
 	raw = (
