@@ -16,6 +16,7 @@
 #if defined(WIN32)
 #include <windows.h>
 #else
+#include <pthread.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/time.h>
@@ -132,11 +133,11 @@ CAMLprim value caml_nice(value val_niceness)
 
 CAMLprim value get_capabilities() {
 	CAMLparam0();
-	int info[4];
-	int max_eax;
 	CAMLlocal1(out_val);
 	out_val = caml_alloc_tuple(5);
 #if defined(WIN32)
+	int info[4];
+	int max_eax;
 	__cpuid(info, 0);
 	max_eax = info[0];
 	if(max_eax >= 1) {
