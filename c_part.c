@@ -16,6 +16,9 @@
 #if defined(WIN32)
 #include <windows.h>
 #else
+#if defined(__CYGWIN__)
+#include <intrin.h>
+#endif
 #include <pthread.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -135,7 +138,7 @@ CAMLprim value get_capabilities() {
 	CAMLparam0();
 	CAMLlocal1(out_val);
 	out_val = caml_alloc_tuple(5);
-#if defined(WIN32)
+#if defined(WIN32) || defined (__CYGWIN__)
 	int info[4];
 	int max_eax;
 	__cpuid(info, 0);
