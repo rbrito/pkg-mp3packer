@@ -2,3 +2,4 @@
 0002-Fix-compilation-on-cygwin.patch
 0003-Fix-some-compiler-warnings.patch
 0004-Fix-to-get-SSE4.1-working.patch
+0005-Fix-absence-of-_byteswap_ulong-on-Linux.patch

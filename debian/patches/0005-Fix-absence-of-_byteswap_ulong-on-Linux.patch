@@ -1,0 +1,28 @@
+From: =?utf-8?q?Rog=C3=A9rio_Brito?= <rbrito@ime.usp.br>
+Date: Sat, 21 Feb 2015 18:08:14 -0200
+Subject: Fix absence of _byteswap_ulong on Linux.
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+I'm trying not to break the build on cygwin, but I don't know if that's
+enough.
+
+Signed-off-by: Rogério Brito <rbrito@ime.usp.br>
+---
+ mp3framehuffman-c.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mp3framehuffman-c.c b/mp3framehuffman-c.c
+index 208454a..32cdb45 100644
+--- a/mp3framehuffman-c.c
++++ b/mp3framehuffman-c.c
+@@ -332,7 +332,7 @@ static unsigned int get_bits_slow(seq_string_t *s, int num_bits) {
+ static unsigned int get_bits_wordwise(seq_string_t *s, int num_bits) {
+ 	uint32 raw;
+ 
+-#if !defined __CYGWIN__
++#if defined(__WIN32__) && !defined __CYGWIN__
+ 	uint32 *int_ptr;
+ 	int_ptr = (uint32 *)s->byte_ptr;
+ 	raw = _byteswap_ulong(*int_ptr) << s->bit_index;
