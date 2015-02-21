@@ -1,0 +1,33 @@
+From: =?utf-8?q?Rog=C3=A9rio_Brito?= <rbrito@ime.usp.br>
+Date: Sat, 21 Feb 2015 18:09:46 -0200
+Subject: Fix compilation under non-windows.
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+According to the [upstream author][1], the function to be called should be,
+indeed, called mfu_find_best_config_base.
+
+I don't know if it works with computers that don't implement SSE versions
+below 4.1 or not (yet).
+
+[1]: http://www.hydrogenaud.io/forums/index.php?s=&showtopic=32379&view=findpost&p=808112
+
+Signed-off-by: Rogério Brito <rbrito@ime.usp.br>
+---
+ mp3frameutils-c.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mp3frameutils-c.c b/mp3frameutils-c.c
+index 87b97e1..70c3f9d 100644
+--- a/mp3frameutils-c.c
++++ b/mp3frameutils-c.c
+@@ -1257,7 +1257,7 @@ CAMLprim value mfu_find_best_config_sse41(
+ 	value quant_raw_ptr,
+ 	value debug_val
+ ) {
+-	return mfu_find_best_config(quant_bits_ptr, quant_bits_count1_char_ptr, scf_bands_ptr, quant_raw_ptr, debug_val);
++	return mfu_find_best_config_base(quant_bits_ptr, quant_bits_count1_char_ptr, scf_bands_ptr, quant_raw_ptr, debug_val);
+ }
+ 
+ #endif // WIN32
