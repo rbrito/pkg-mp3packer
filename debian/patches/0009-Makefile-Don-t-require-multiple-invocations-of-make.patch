@@ -1,0 +1,25 @@
+From: =?utf-8?q?Rog=C3=A9rio_Brito?= <rbrito@ime.usp.br>
+Date: Sat, 21 Feb 2015 18:53:57 -0200
+Subject: Makefile: Don't require multiple invocations of make.
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Rogério Brito <rbrito@ime.usp.br>
+---
+ makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/makefile b/makefile
+index d323245..3461270 100644
+--- a/makefile
++++ b/makefile
+@@ -19,7 +19,7 @@ common=$(SSEOPT) -thread unix.cmxa threads.cmxa str.cmxa $(EXLIBRARIES)
+ ocaml=ocamlopt.opt $(common)
+ 
+ 
+-all: mp3packer
++all: depend mp3packer
+ 
+ 
+ .SUFFIXES: .ml .mli .cmo .cmi .cmx $O
