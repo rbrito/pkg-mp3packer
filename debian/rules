@@ -4,3 +4,5 @@
 
 override_dh_auto_configure:
 	$(MAKE) depend
+
+override_dh_auto_test:
