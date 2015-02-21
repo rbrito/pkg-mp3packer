@@ -4,3 +4,4 @@
 0004-Fix-to-get-SSE4.1-working.patch
 0005-Fix-absence-of-_byteswap_ulong-on-Linux.patch
 0006-Fix-compilation-under-non-windows.patch
+0007-Makefile-Don-t-bomb-compilation-on-32-64-bits.patch
