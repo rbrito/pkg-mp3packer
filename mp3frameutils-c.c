@@ -566,7 +566,7 @@ CAMLprim value mfu_find_best_config_base(
 
 
 // Only use for Windows -- I don't really want to debug this too much
-#ifdef WIN32
+#if defined(WIN32) || defined(__CYGWIN__)
 
 #include <emmintrin.h>
 #include <smmintrin.h>
