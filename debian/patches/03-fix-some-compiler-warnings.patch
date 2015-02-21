@@ -1,0 +1,78 @@
+From 1eae8ab54144915d55b407fd0760d125dfd6f44a Mon Sep 17 00:00:00 2001
+From: Mangix <rosenp@gmail.com>
+Date: Sun, 1 Dec 2013 13:06:58 -0800
+Subject: [PATCH] Fix some compiler warnings
+
+---
+ c_part.c            |  5 +++--
+ mp3framehuffman-c.c | 14 +++++++-------
+ 2 files changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/c_part.c b/c_part.c
+index 85b8961..da8823a 100644
+--- a/c_part.c
++++ b/c_part.c
+@@ -16,6 +16,7 @@
+ #if defined(WIN32)
+ #include <windows.h>
+ #else
++#include <pthread.h>
+ #include <sys/stat.h>
+ #include <sys/types.h>
+ #include <sys/time.h>
+@@ -132,11 +133,11 @@ CAMLprim value caml_nice(value val_niceness)
+ 
+ CAMLprim value get_capabilities() {
+ 	CAMLparam0();
+-	int info[4];
+-	int max_eax;
+ 	CAMLlocal1(out_val);
+ 	out_val = caml_alloc_tuple(5);
+ #if defined(WIN32)
++	int info[4];
++	int max_eax;
+ 	__cpuid(info, 0);
+ 	max_eax = info[0];
+ 	if(max_eax >= 1) {
+diff --git a/mp3framehuffman-c.c b/mp3framehuffman-c.c
+index 0db5b62..208454a 100644
+--- a/mp3framehuffman-c.c
++++ b/mp3framehuffman-c.c
+@@ -330,11 +330,11 @@ static unsigned int get_bits_slow(seq_string_t *s, int num_bits) {
+ }
+ 
+ static unsigned int get_bits_wordwise(seq_string_t *s, int num_bits) {
+-	uint32 *int_ptr;
+ 	uint32 raw;
+-	int_ptr = (uint32 *)s->byte_ptr;
+ 
+ #if !defined __CYGWIN__
++	uint32 *int_ptr;
++	int_ptr = (uint32 *)s->byte_ptr;
+ 	raw = _byteswap_ulong(*int_ptr) << s->bit_index;
+ #else
+ 	raw = (
+@@ -421,9 +421,9 @@ CAMLprim value mfh_decode_big_quants(
+ 	int out_off = Int_val(out_off_val);
+ 	int out_off_too_many = Int_val(out_off_too_many_val);
+ 	int ht = Int_val(ht_val);
+-	const short *start_tab = mfh_tables[ht];
+-	const short *tab;
+-	short linbits = linbits_table[ht];
++//	const short *start_tab = mfh_tables[ht];
++//	const short *tab;
++//	short linbits = linbits_table[ht];
+ 	seq_string_t s;
+ 
+ 	CAMLlocal1(out_val);
+@@ -643,8 +643,8 @@ CAMLprim value mfh_decode_count1_quants(
+ 	int out_off = Int_val(out_off_val);
+ 	int out_off_too_many = Int_val(out_off_too_many_val);
+ 	int ht = Int_val(ht_one_val);
+-	const short *start_tab = (ht ? tab_c1 : tab_c0);
+-	const short *tab;
++//	const short *start_tab = (ht ? tab_c1 : tab_c0);
++//	const short *tab;
+ 	int overboard = 0;
+ 	seq_string_t s;
+ 

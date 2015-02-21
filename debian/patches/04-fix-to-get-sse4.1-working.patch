@@ -1,0 +1,55 @@
+From f99467bff282059339fbf1ad2860b5585e835f59 Mon Sep 17 00:00:00 2001
+From: Mangix <rosenp@gmail.com>
+Date: Sun, 1 Dec 2013 14:01:22 -0800
+Subject: [PATCH] Fix to get SSE4.1 working
+
+---
+ c_part.c          | 5 ++++-
+ mp3frameutils-c.c | 4 ++--
+ 2 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/c_part.c b/c_part.c
+index da8823a..f34791e 100644
+--- a/c_part.c
++++ b/c_part.c
+@@ -16,6 +16,9 @@
+ #if defined(WIN32)
+ #include <windows.h>
+ #else
++#if defined(__CYGWIN__)
++#include <intrin.h>
++#endif
+ #include <pthread.h>
+ #include <sys/stat.h>
+ #include <sys/types.h>
+@@ -135,7 +138,7 @@ CAMLprim value get_capabilities() {
+ 	CAMLparam0();
+ 	CAMLlocal1(out_val);
+ 	out_val = caml_alloc_tuple(5);
+-#if defined(WIN32)
++#if defined(WIN32) || defined (__CYGWIN__)
+ 	int info[4];
+ 	int max_eax;
+ 	__cpuid(info, 0);
+diff --git a/mp3frameutils-c.c b/mp3frameutils-c.c
+index 3fe124e..87b97e1 100644
+--- a/mp3frameutils-c.c
++++ b/mp3frameutils-c.c
+@@ -566,7 +566,7 @@ CAMLprim value mfu_find_best_config_base(
+ 
+ 
+ // Only use for Windows -- I don't really want to debug this too much
+-#ifdef WIN32
++#if defined(WIN32) || defined(__CYGWIN__)
+ 
+ #include <emmintrin.h>
+ #include <smmintrin.h>
+@@ -1257,7 +1257,7 @@ CAMLprim value mfu_find_best_config_sse41(
+ 	value quant_raw_ptr,
+ 	value debug_val
+ ) {
+-	return mfu_find_best_config_sse41(quant_bits_ptr, quant_bits_count1_char_ptr, scf_bands_ptr, quant_raw_ptr, debug_val);
++	return mfu_find_best_config(quant_bits_ptr, quant_bits_count1_char_ptr, scf_bands_ptr, quant_raw_ptr, debug_val);
+ }
+ 
+ #endif // WIN32

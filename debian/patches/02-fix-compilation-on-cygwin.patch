@@ -1,0 +1,58 @@
+From 2e62657a303bca4016059137157c951060fe52e1 Mon Sep 17 00:00:00 2001
+From: Mangix <rosenp@gmail.com>
+Date: Sat, 30 Nov 2013 15:37:52 -0800
+Subject: [PATCH] Fix compilation on cygwin
+
+---
+ c_part.c            | 3 ++-
+ mp3framehuffman-c.c | 2 +-
+ mp3frameutils-c.c   | 2 +-
+ 3 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/c_part.c b/c_part.c
+index cffec1a..85b8961 100644
+--- a/c_part.c
++++ b/c_part.c
+@@ -16,6 +16,7 @@
+ #if defined(WIN32)
+ #include <windows.h>
+ #else
++#include <sys/stat.h>
+ #include <sys/types.h>
+ #include <sys/time.h>
+ #endif
+@@ -186,7 +187,7 @@ CAMLprim value get_os_thread_self_id() {
+ 		out_val = win_alloc_handle(dup_handle);
+ 	}
+ #else
+-	out_val = Val_int(gettid());
++	out_val = Val_int(pthread_self());
+ #endif
+ 	CAMLreturn(out_val);
+ }
+diff --git a/mp3framehuffman-c.c b/mp3framehuffman-c.c
+index 7dde912..0db5b62 100644
+--- a/mp3framehuffman-c.c
++++ b/mp3framehuffman-c.c
+@@ -334,7 +334,7 @@ static unsigned int get_bits_wordwise(seq_string_t *s, int num_bits) {
+ 	uint32 raw;
+ 	int_ptr = (uint32 *)s->byte_ptr;
+ 
+-#if 1
++#if !defined __CYGWIN__
+ 	raw = _byteswap_ulong(*int_ptr) << s->bit_index;
+ #else
+ 	raw = (
+diff --git a/mp3frameutils-c.c b/mp3frameutils-c.c
+index 1ae6e2f..3fe124e 100644
+--- a/mp3frameutils-c.c
++++ b/mp3frameutils-c.c
+@@ -1257,7 +1257,7 @@ CAMLprim value mfu_find_best_config_sse41(
+ 	value quant_raw_ptr,
+ 	value debug_val
+ ) {
+-	return mfu_find_best_config(quant_bits_ptr, quant_bits_count1_char_ptr, scf_bands_ptr, quant_raw_ptr, debug_val);
++	return mfu_find_best_config_sse41(quant_bits_ptr, quant_bits_count1_char_ptr, scf_bands_ptr, quant_raw_ptr, debug_val);
+ }
+ 
+ #endif // WIN32
