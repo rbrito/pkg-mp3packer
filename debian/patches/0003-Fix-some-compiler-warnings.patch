@@ -1,7 +1,6 @@
-From 1eae8ab54144915d55b407fd0760d125dfd6f44a Mon Sep 17 00:00:00 2001
 From: Mangix <rosenp@gmail.com>
 Date: Sun, 1 Dec 2013 13:06:58 -0800
-Subject: [PATCH] Fix some compiler warnings
+Subject: Fix some compiler warnings
 
 ---
  c_part.c            |  5 +++--

@@ -1,7 +1,6 @@
-From 2e62657a303bca4016059137157c951060fe52e1 Mon Sep 17 00:00:00 2001
 From: Mangix <rosenp@gmail.com>
 Date: Sat, 30 Nov 2013 15:37:52 -0800
-Subject: [PATCH] Fix compilation on cygwin
+Subject: Fix compilation on cygwin
 
 ---
  c_part.c            | 3 ++-

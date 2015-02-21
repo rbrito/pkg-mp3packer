@@ -1,0 +1,20 @@
+From: =?utf-8?q?Rog=C3=A9rio_Brito?= <rbrito@ime.usp.br>
+Date: Sat, 21 Feb 2015 18:01:18 -0200
+Subject: 01-fix-generation-of-dependencies
+
+---
+ makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/makefile b/makefile
+index 8b6428f..a8933b7 100644
+--- a/makefile
++++ b/makefile
+@@ -77,6 +77,6 @@ clean:
+ depend:
+ 	ocamldep *.mli *.ml > .depend
+ 
+-include .depend
++-include .depend
+ 
+ 

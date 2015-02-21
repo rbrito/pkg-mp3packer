@@ -1,7 +1,6 @@
-From f99467bff282059339fbf1ad2860b5585e835f59 Mon Sep 17 00:00:00 2001
 From: Mangix <rosenp@gmail.com>
 Date: Sun, 1 Dec 2013 14:01:22 -0800
-Subject: [PATCH] Fix to get SSE4.1 working
+Subject: Fix to get SSE4.1 working
 
 ---
  c_part.c          | 5 ++++-

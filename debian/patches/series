@@ -1,4 +1,4 @@
-01-fix-generation-of-dependencies.patch
-02-fix-compilation-on-cygwin.patch
-03-fix-some-compiler-warnings.patch
-04-fix-to-get-sse4.1-working.patch
+0001-01-fix-generation-of-dependencies.patch
+0002-Fix-compilation-on-cygwin.patch
+0003-Fix-some-compiler-warnings.patch
+0004-Fix-to-get-SSE4.1-working.patch
