@@ -7,3 +7,5 @@
 0007-Makefile-Don-t-bomb-compilation-on-32-64-bits.patch
 0008-Makefile-Only-compile-mp3packer.patch
 0009-Makefile-Don-t-require-multiple-invocations-of-make.patch
+0010-migrate-to-OCamlMakefile.patch
+0011-hopefully-universal-byteswap.patch

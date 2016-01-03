@@ -1,0 +1,184 @@
+From: Jason Penney <jpenney@jczorkmid.net>
+Date: Sat, 2 Jan 2016 13:25:11 -0500
+Subject: (hopefully) universal byteswap
+
+---
+ c_part.c            |  2 ++
+ mp3framehuffman-c.c | 12 +-----------
+ ptr-c.c             | 37 ++++---------------------------------
+ ptr.h               | 49 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 56 insertions(+), 44 deletions(-)
+
+diff --git a/c_part.c b/c_part.c
+index f34791e..12d01a4 100644
+--- a/c_part.c
++++ b/c_part.c
+@@ -190,6 +190,8 @@ CAMLprim value get_os_thread_self_id() {
+ //		printf("HANDLE IS %p\n", (int)dup_handle);
+ 		out_val = win_alloc_handle(dup_handle);
+ 	}
++#elif defined(__APPLE__)
++    out_val = pthread_mach_thread_np(pthread_self());
+ #else
+ 	out_val = Val_int(pthread_self());
+ #endif
+diff --git a/mp3framehuffman-c.c b/mp3framehuffman-c.c
+index 32cdb45..07b7db3 100644
+--- a/mp3framehuffman-c.c
++++ b/mp3framehuffman-c.c
+@@ -331,19 +331,9 @@ static unsigned int get_bits_slow(seq_string_t *s, int num_bits) {
+ 
+ static unsigned int get_bits_wordwise(seq_string_t *s, int num_bits) {
+ 	uint32 raw;
+-
+-#if defined(__WIN32__) && !defined __CYGWIN__
+ 	uint32 *int_ptr;
+ 	int_ptr = (uint32 *)s->byte_ptr;
+-	raw = _byteswap_ulong(*int_ptr) << s->bit_index;
+-#else
+-	raw = (
+-		(s->byte_ptr[0] << 24) |
+-		(s->byte_ptr[1] << 16) |
+-		(s->byte_ptr[2] <<  8) |
+-		(s->byte_ptr[3]      )
+-	);
+-#endif
++	raw = byteswap32(*int_ptr) << s->bit_index;
+ 	raw >>= 1;
+ 	raw >>= 31 - num_bits;
+ 
+diff --git a/ptr-c.c b/ptr-c.c
+index a80864d..ebf30df 100644
+--- a/ptr-c.c
++++ b/ptr-c.c
+@@ -18,11 +18,6 @@
+ //#define enter_blocking_section()
+ //#define leave_blocking_section()
+ 
+-#ifdef _WIN32
+-#define HAS_BYTESWAP 1
+-#endif
+-
+-
+ /*
+  * This is a new style for ptrs: the custom ptr points to a ptr_struct struct
+  */
+@@ -318,23 +313,12 @@ CAMLprim value ptr_get_float_of_64(value ptr_val, value offset_val) {
+ // Apparently CAMLparamX is only needed if a heap allocation takes place before a heap access
+ CAMLprim void ptr_put_16_of_int_bswap(value ptr_val, value offset_val, value put_val) {
+ 	uint16_t *loc = (uint16_t *)(Begin_val(ptr_val) + Long_val(offset_val));
+-	uint16_t put = Int_val(put_val);
+-	// It looks like _byteswap_ushort just maps to a 16-bit rotate, so use a more portable version
+-	// It should map the exact same way
+-	put = (((put & 0x00FF) << 8) | ((put & 0xFF00) >> 8));
+-	*loc = put;
++	*loc = byteswap16(Int_val(put_val));
+ }
+ 
+ CAMLprim void ptr_put_32_of_int_bswap(value ptr_val, value offset_val, value put_val) {
+ 	uint32 *loc = (uint32 *)(Begin_val(ptr_val) + Long_val(offset_val));
+-	uint32 put = Int_val(put_val);
+-#if HAS_BYTESWAP
+-	put = _byteswap_ulong(put);
+-#else
+-	put = (((put & 0x0000FFFF) << 16) | ((put & 0xFFFF0000) >> 16));
+-	put = (((put & 0x00FF00FF) <<  8) | ((put & 0xFF00FF00) >>  8));
+-#endif
+-	*loc = put;
++	*loc = byteswap32(Int_val(put_val));
+ }
+ 
+ // bswap only works on ints, so we have to go double -> float -> int
+@@ -342,25 +326,12 @@ CAMLprim void ptr_put_32_of_float_bswap(value ptr_val, value offset_val, value p
+ 	uint32 *loc = (uint32 *)(Begin_val(ptr_val) + Long_val(offset_val));
+ 	float put_float = Double_val(put_val);
+ 	uint32 put = *((uint32 *)(&put_float));
+-#if HAS_BYTESWAP
+-	put = _byteswap_ulong(put);
+-#else
+-	put = (((put & 0x0000FFFF) << 16) | ((put & 0xFFFF0000) >> 16));
+-	put = (((put & 0x00FF00FF) <<  8) | ((put & 0xFF00FF00) >>  8));
+-#endif
+-	*loc = put;
++	*loc = byteswap32(put);
+ }
+ 
+ CAMLprim value ptr_get_int_of_32u_bswap(value ptr_val, value offset_val) {
+ 	uint32 *loc = (uint32 *)(Begin_val(ptr_val) + Long_val(offset_val));
+-	uint32 got = loc[0];
+-#if HAS_BYTESWAP
+-	got = _byteswap_ulong(got);
+-#else
+-// GCC has __builtin_bswap32, but the assembly doesn't look too much better
+-	got = (((got & 0x0000FFFF) << 16) | ((got & 0xFFFF0000) >> 16));
+-	got = (((got & 0x00FF00FF) <<  8) | ((got & 0xFF00FF00) >>  8));
+-#endif
++	uint32 got = byteswap32(loc[0]);
+ 	return(Val_int(got));
+ }
+ 
+diff --git a/ptr.h b/ptr.h
+index ae6b024..0d1445f 100644
+--- a/ptr.h
++++ b/ptr.h
+@@ -37,6 +37,14 @@ typedef unsigned __int16 uint16_t;
+ #define TRUE 1
+ #endif
+ 
++#ifdef __linux__
++#include <byteswap.h>
++#endif
++
++#if defined(__APPLE__)
++#include <libkern/OSByteOrder.h>
++#endif
++
+ enum ptr_type {
+ 	PTR_MALLOC,
+ 	PTR_MMAP,
+@@ -108,4 +116,45 @@ static struct custom_operations generic_ptr_opts = {
+ 	custom_deserialize_default
+ };
+ 
++static inline uint32_t byteswap32(uint32_t n)
++{
++#if defined(__builtin_bswap32)
++     return __builtin_bswap32(n);
++#elif defined(OSSwapInt32)
++     return OSSwapInt32(n);
++#elif defined(bswap32)
++     return bswap32(n);
++#elif defined(__swap32)
++     return __swap32(n);
++#elif defined(bswap_32)
++     return bswap_32(n);
++#elif defined(_byteswap_ulong)
++     return _byteswap_ulong(n);
++#else 
++     return	(((n << 24) & 0xff000000 ) |
++             ((n <<  8) & 0x00ff0000 ) |
++             ((n >>  8) & 0x0000ff00 ) |
++     		 ((n >> 24) & 0x000000ff ));
++#endif
++}
++
++static inline uint16_t byteswap16(uint16_t n)
++{
++#if defined(__builtin_bswap16)
++     return __builtin_bswap16(n);
++#elif defined(OSSwapInt16)
++     return OSSwapInt16(n);
++#elif defined(bswap16)
++     return bswap16(n);
++#elif defined(__swap16)
++     return __swap16(n);
++#elif defined(bswap_16)
++     return bswap_16(n);
++#elif defined(_byteswap_ushort)
++     return _byteswap_ushort(n);
++#else
++     return (((n & 0x00FF) << 8) | ((n & 0xFF00) >> 8));
++#endif
++}
++
+ #endif /* PTR_H */
