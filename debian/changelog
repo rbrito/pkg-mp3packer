@@ -1,6 +1,6 @@
-mp3packer (2.04-1~4.gbp77d75f) UNRELEASED; urgency=low
+mp3packer (2.04-1~5.gbp75ea29) UNRELEASED; urgency=low
 
-  ** SNAPSHOT build @77d75fa3155186f75bb3f35efbe86fcc2bef05ee **
+  ** SNAPSHOT build @75ea293ace08e751cf839391407d668080ad37a2 **
 
   * Imported Upstream version 1.26
   * Imported Upstream version 2.00
@@ -27,8 +27,9 @@ mp3packer (2.04-1~4.gbp77d75f) UNRELEASED; urgency=low
   * debian/rules: Skip running tests (no source provided?).
   * debian/copyright: Rewrite in machine readable format.
   * debian/gbp.conf: Rename section [git-dch] to [dch].
+  * debian/rules: Set my email to gmail.
 
- -- Rogério Brito <rbrito@gmail.com>  Fri, 26 Feb 2021 21:14:07 -0300
+ -- Rogério Brito <rbrito@gmail.com>  Fri, 26 Feb 2021 21:15:36 -0300
 
 mp3packer (1.25-1~3) unstable; urgency=low
 
