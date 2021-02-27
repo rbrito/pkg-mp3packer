@@ -6,16 +6,14 @@ mp3packer is to, assuming that one already has the appropriate
 build-dependencies, `devscripts`, `pristine-tar`, and `git-buildpackage`
 installed:
 
-    git clone git+ssh://git.debian.org/git/collab-maint/mp3packer.git
-    cd mp3packer
-    git branch upstream origin/upstream
-    git branch pristine-tar origin/pristine-tar
-    git-import-orig --uscan --pristine-tar
+    gbp clone --all https://github.com/rbrito/pkg-mp3packer
+    cd pkg-mp3packer
+    gbp import-orig --uscan --pristine-tar
     [ Make here some adaptations, like updating debian/patches, if needed ]
-    git-buildpackage --git-pristine-tar
+    gbp buildpackage -us -uc
 
 These are the important steps and may need to be changed according to
 deviations, say, in the release process of upstream releases (e.g., if
 upstream changes the location where the tarballs reside).
 
- -- Rogério Brito <rbrito@ime.usp.br>, Sat, 20 Aug 2011 02:09:19 -0300
+ -- Rogério Brito <rbrito@gmail.com>, Fri, 26 Feb 2021 21:33:16 -0300
