@@ -1,7 +1,7 @@
 Source: mp3packer
 Section: sound
 Priority: optional
-Maintainer: Rogério Brito <rbrito@ime.usp.br>
+Maintainer: Rogério Brito <rbrito@gmail.com>
 Build-Depends:
  debhelper (>= 9),
  ocaml-native-compilers (>= 4)
