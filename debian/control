@@ -3,7 +3,7 @@ Section: sound
 Priority: optional
 Maintainer: Rogério Brito <rbrito@gmail.com>
 Build-Depends:
- debhelper (>= 9),
+ debhelper (>= 12~),
  ocaml-native-compilers (>= 4)
 Standards-Version: 3.9.2
 Homepage: http://omion.dyndns.org/mp3packer/
