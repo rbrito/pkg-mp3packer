@@ -22,7 +22,8 @@ mp3packer (2.04-1~5.gbp75ea29) UNRELEASED; urgency=low
     + Add 0007-... Don't bomb compilation on 32/64 bits.
     + Add 0008-... Only compile mp3packer.
   * debian/control: Bump debhelper build-dep to 9.
-  * debian/patches: Add 0009-Makefile-Don-t-require-multiple-invocations-of-make.patch.
+  * debian/patches: Add
+    0009-Makefile-Don-t-require-multiple-invocations-of-make.patch.
   * debian/rules: Add custom step to configure the build.
   * debian/rules: Skip running tests (no source provided?).
   * debian/copyright: Rewrite in machine readable format.
