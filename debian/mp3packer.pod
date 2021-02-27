@@ -314,6 +314,6 @@ behavior before 1.16).
 =head1 AUTHOR
 
 B<Mp3packer> was written by Reed Wilson ("Omion").  This manpage was written
-by Rogerio Theodoro de Brito <rbrito@ime.usp.br>.
+by Rogerio Theodoro de Brito <rbrito@gmail.com>.
 
 =cut
