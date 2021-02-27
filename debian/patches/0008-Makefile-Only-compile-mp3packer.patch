@@ -1,4 +1,4 @@
-From: =?utf-8?q?Rog=C3=A9rio_Brito?= <rbrito@ime.usp.br>
+From: =?utf-8?q?Rog=C3=A9rio_Brito?= <rbrito@gmail.com>
 Date: Sat, 21 Feb 2015 18:29:03 -0200
 Subject: Makefile: Only compile mp3packer.
 MIME-Version: 1.0
@@ -8,7 +8,7 @@ Content-Transfer-Encoding: 8bit
 mp3reader is giving some compilation errors even after making some obvious
 substitutions.
 
-Signed-off-by: Rogério Brito <rbrito@ime.usp.br>
+Signed-off-by: Rogério Brito <rbrito@gmail.com>
 ---
  makefile | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

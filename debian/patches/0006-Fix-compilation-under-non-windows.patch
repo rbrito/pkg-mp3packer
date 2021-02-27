@@ -1,4 +1,4 @@
-From: =?utf-8?q?Rog=C3=A9rio_Brito?= <rbrito@ime.usp.br>
+From: =?utf-8?q?Rog=C3=A9rio_Brito?= <rbrito@gmail.com>
 Date: Sat, 21 Feb 2015 18:09:46 -0200
 Subject: Fix compilation under non-windows.
 MIME-Version: 1.0
@@ -13,7 +13,7 @@ below 4.1 or not (yet).
 
 [1]: http://www.hydrogenaud.io/forums/index.php?s=&showtopic=32379&view=findpost&p=808112
 
-Signed-off-by: Rogério Brito <rbrito@ime.usp.br>
+Signed-off-by: Rogério Brito <rbrito@gmail.com>
 ---
  mp3frameutils-c.c | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

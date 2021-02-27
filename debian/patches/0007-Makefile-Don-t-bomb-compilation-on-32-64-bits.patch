@@ -1,11 +1,11 @@
-From: =?utf-8?q?Rog=C3=A9rio_Brito?= <rbrito@ime.usp.br>
+From: =?utf-8?q?Rog=C3=A9rio_Brito?= <rbrito@gmail.com>
 Date: Sat, 21 Feb 2015 18:28:30 -0200
 Subject: Makefile: Don't bomb compilation on 32/64 bits.
 MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: 8bit
 
-Signed-off-by: Rogério Brito <rbrito@ime.usp.br>
+Signed-off-by: Rogério Brito <rbrito@gmail.com>
 ---
  makefile | 9 ---------
  1 file changed, 9 deletions(-)
