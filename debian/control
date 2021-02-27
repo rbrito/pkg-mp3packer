@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Rogério Brito <rbrito@gmail.com>
 Build-Depends:
  debhelper-compat (= 12),
- ocaml-native-compilers (>= 4)
+ ocaml-native-compilers
 Standards-Version: 3.9.2
 Homepage: http://omion.dyndns.org/mp3packer/
 
